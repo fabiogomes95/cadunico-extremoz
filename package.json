@@ -1,0 +1,49 @@
+{
+  "name": "cadunico-atendimentos",
+  "version": "0.1.0",
+  "description": "Sistema de Controle de Atendimentos - Cadastro Único (Extremoz/RN)",
+  "main": "src/main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win nsis"
+  },
+  "author": "",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "sql.js": "^1.11.0",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "electron": "^32.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "rn.extremoz.cadunico.atendimentos",
+    "productName": "Controle de Atendimentos - Cadastro Unico",
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "**/node_modules/sql.js/dist/*.wasm"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  }
+}

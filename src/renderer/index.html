@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+<title>Cadastro Único — Controle de Atendimentos</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topo">
+    <h1>Controle de Atendimentos — Cadastro Único</h1>
+    <p class="subtitulo">Extremoz/RN</p>
+  </header>
+
+  <nav class="abas">
+    <button class="aba-btn ativa" data-aba="atendimento">Novo Atendimento</button>
+    <button class="aba-btn" data-aba="consulta">Consultar Pessoa</button>
+    <button class="aba-btn" data-aba="relatorios">Relatórios</button>
+  </nav>
+
+  <main>
+    <!-- ABA: NOVO ATENDIMENTO -->
+    <section id="aba-atendimento" class="aba">
+      <div class="painel">
+        <h2>1. Localizar pessoa</h2>
+        <div class="linha">
+          <div class="campo">
+            <label for="busca-nis">NIS</label>
+            <input id="busca-nis" type="text" placeholder="Número do NIS" inputmode="numeric" />
+          </div>
+          <div class="campo">
+            <label for="busca-cpf">CPF</label>
+            <input id="busca-cpf" type="text" placeholder="Somente números" inputmode="numeric" />
+          </div>
+          <div class="campo campo-botao">
+            <button id="btn-buscar" class="btn">Buscar</button>
+          </div>
+        </div>
+        <p id="busca-status" class="dica"></p>
+      </div>
+
+      <div class="painel">
+        <h2>2. Dados da pessoa</h2>
+        <div class="linha">
+          <div class="campo campo-grande">
+            <label for="f-nome">Nome completo *</label>
+            <input id="f-nome" type="text" placeholder="Nome da pessoa" />
+          </div>
+          <div class="campo">
+            <label for="f-bairro">Bairro</label>
+            <input id="f-bairro" type="text" placeholder="Bairro" list="lista-bairros" />
+          </div>
+        </div>
+        <div class="linha">
+          <div class="campo">
+            <label for="f-nis">NIS</label>
+            <input id="f-nis" type="text" inputmode="numeric" />
+          </div>
+          <div class="campo">
+            <label for="f-cpf">CPF</label>
+            <input id="f-cpf" type="text" inputmode="numeric" />
+          </div>
+        </div>
+      </div>
+
+      <div class="painel">
+        <h2>3. Dados do atendimento</h2>
+        <div class="linha">
+          <div class="campo">
+            <label for="f-data">Data *</label>
+            <input id="f-data" type="date" />
+          </div>
+          <div class="campo campo-grande">
+            <label for="f-tipo">Tipo de atendimento *</label>
+            <select id="f-tipo"></select>
+          </div>
+        </div>
+        <div class="linha">
+          <div class="campo campo-grande">
+            <label for="f-obs">Observação (opcional)</label>
+            <input id="f-obs" type="text" placeholder="Detalhe adicional, se necessário" />
+          </div>
+        </div>
+        <div class="linha">
+          <button id="btn-registrar" class="btn btn-primario">Registrar atendimento</button>
+          <button id="btn-limpar" class="btn btn-secundario">Limpar</button>
+        </div>
+        <p id="registro-status" class="dica"></p>
+      </div>
+
+      <div class="painel">
+        <h2>Histórico deste ano</h2>
+        <table class="tabela">
+          <thead>
+            <tr><th>Data</th><th>Tipo</th><th>Bairro</th><th>Observação</th><th>Ações</th></tr>
+          </thead>
+          <tbody id="historico-corpo">
+            <tr><td colspan="5" class="vazio">Busque ou registre um atendimento para ver o histórico.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ABA: CONSULTAR PESSOA -->
+    <section id="aba-consulta" class="aba oculta">
+      <div class="painel">
+        <h2>Pesquisar</h2>
+        <div class="linha">
+          <div class="campo campo-grande">
+            <label for="c-termo">Nome, NIS ou CPF</label>
+            <input id="c-termo" type="text" placeholder="Digite o nome (ou parte dele), NIS ou CPF" />
+          </div>
+          <div class="campo campo-botao">
+            <button id="c-btn-buscar" class="btn">Pesquisar</button>
+          </div>
+        </div>
+        <p id="c-status" class="dica"></p>
+      </div>
+
+      <div id="c-painel-resultados" class="painel oculta">
+        <h2>Resultados</h2>
+        <table class="tabela">
+          <thead><tr><th>Nome</th><th>NIS</th><th>CPF</th><th>Bairro</th><th></th></tr></thead>
+          <tbody id="c-resultados-corpo"></tbody>
+        </table>
+      </div>
+
+      <div id="c-painel-pessoa" class="painel oculta">
+        <h2 id="c-pessoa-nome">—</h2>
+        <p class="dica" id="c-pessoa-info"></p>
+        <table class="tabela">
+          <thead>
+            <tr><th>Data</th><th>Tipo</th><th>Bairro</th><th>Observação</th><th>Ações</th></tr>
+          </thead>
+          <tbody id="c-historico-corpo"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ABA: RELATÓRIOS -->
+    <section id="aba-relatorios" class="aba oculta">
+      <div class="painel">
+        <h2>Filtros</h2>
+        <div class="linha">
+          <div class="campo">
+            <label for="r-inicio">De</label>
+            <input id="r-inicio" type="date" />
+          </div>
+          <div class="campo">
+            <label for="r-fim">Até</label>
+            <input id="r-fim" type="date" />
+          </div>
+          <div class="campo campo-grande">
+            <label for="r-tipo">Tipo</label>
+            <select id="r-tipo"><option value="">Todos os tipos</option></select>
+          </div>
+        </div>
+        <div class="linha atalhos">
+          <button class="btn btn-chip" data-periodo="hoje">Hoje</button>
+          <button class="btn btn-chip" data-periodo="mes">Este mês</button>
+          <button class="btn btn-chip" data-periodo="ano">Este ano</button>
+        </div>
+        <div class="linha">
+          <button id="btn-gerar" class="btn btn-primario">Gerar relatório</button>
+          <button id="btn-exportar" class="btn btn-secundario">Exportar (Excel/CSV)</button>
+          <button id="btn-exportar-pdf" class="btn btn-secundario">Exportar PDF</button>
+        </div>
+        <p id="relatorio-status" class="dica"></p>
+      </div>
+
+      <div class="painel">
+        <h2>Resumo por tipo</h2>
+        <table class="tabela">
+          <thead><tr><th>Tipo</th><th>Total</th></tr></thead>
+          <tbody id="resumo-corpo">
+            <tr><td colspan="2" class="vazio">Gere um relatório para ver o resumo.</td></tr>
+          </tbody>
+          <tfoot>
+            <tr><th id="resumo-total-rotulo">Total geral</th><th id="resumo-total-valor">—</th></tr>
+          </tfoot>
+        </table>
+      </div>
+
+      <div class="painel">
+        <h2>Atendimentos do período</h2>
+        <table class="tabela">
+          <thead>
+            <tr><th>Data</th><th>Tipo</th><th>Nome</th><th>NIS</th><th>CPF</th><th>Bairro</th></tr>
+          </thead>
+          <tbody id="relatorio-corpo">
+            <tr><td colspan="6" class="vazio">Sem dados ainda.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <datalist id="lista-bairros"></datalist>
+
+  <script src="renderer.js"></script>
+</body>
+</html>
