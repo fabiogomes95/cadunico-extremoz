@@ -8,8 +8,14 @@
 </head>
 <body>
   <header class="topo">
-    <h1>Controle de Atendimentos — Cadastro Único</h1>
-    <p class="subtitulo">Extremoz/RN</p>
+    <div>
+      <h1>Controle de Atendimentos — Cadastro Único</h1>
+      <p class="subtitulo">Extremoz/RN</p>
+    </div>
+    <div class="atendente-box">
+      <label for="atendente">Atendente</label>
+      <input id="atendente" type="text" list="lista-atendentes" placeholder="Seu nome" autocomplete="off" />
+    </div>
   </header>
 
   <nav class="abas">
@@ -26,76 +32,69 @@
         <div class="linha">
           <div class="campo">
             <label for="busca-nis">NIS</label>
-            <input id="busca-nis" type="text" placeholder="Número do NIS" inputmode="numeric" />
+            <input id="busca-nis" type="text" placeholder="11 números" inputmode="numeric" autocomplete="off" />
           </div>
           <div class="campo">
             <label for="busca-cpf">CPF</label>
-            <input id="busca-cpf" type="text" placeholder="Somente números" inputmode="numeric" />
+            <input id="busca-cpf" type="text" placeholder="11 números" inputmode="numeric" autocomplete="off" />
           </div>
-          <div class="campo campo-botao">
-            <button id="btn-buscar" class="btn">Buscar</button>
+          <div class="campo campo-botao campo-botoes">
+            <button id="btn-buscar" class="btn btn-primario">Buscar</button>
+            <button id="btn-limpar" class="btn btn-secundario">Limpar</button>
           </div>
         </div>
-        <p id="busca-status" class="dica"></p>
+        <p id="busca-status" class="dica">Digite o NIS ou o CPF e aperte Enter.</p>
+        <div id="cartao-pessoa" class="cartao oculta"></div>
       </div>
 
-      <div class="painel">
-        <h2>2. Dados da pessoa</h2>
-        <div class="linha">
-          <div class="campo campo-grande">
-            <label for="f-nome">Nome completo *</label>
-            <input id="f-nome" type="text" placeholder="Nome da pessoa" />
-          </div>
-          <div class="campo">
-            <label for="f-bairro">Bairro</label>
-            <input id="f-bairro" type="text" placeholder="Bairro" list="lista-bairros" />
+      <div id="bloco-registro" class="oculta">
+        <div class="painel">
+          <h2>2. Dados da pessoa</h2>
+          <div class="linha">
+            <div class="campo campo-grande">
+              <label for="f-nome">Nome completo *</label>
+              <input id="f-nome" type="text" placeholder="Nome da pessoa" autocomplete="off" />
+            </div>
+            <div class="campo">
+              <label for="f-bairro">Bairro</label>
+              <input id="f-bairro" type="text" placeholder="Bairro" list="lista-bairros" autocomplete="off" />
+            </div>
           </div>
         </div>
-        <div class="linha">
-          <div class="campo">
-            <label for="f-nis">NIS</label>
-            <input id="f-nis" type="text" inputmode="numeric" />
+
+        <div class="painel">
+          <h2>3. Dados do atendimento</h2>
+          <div class="linha">
+            <div class="campo">
+              <label for="f-data">Data *</label>
+              <input id="f-data" type="date" />
+            </div>
+            <div class="campo campo-grande">
+              <label for="f-tipo">Tipo de atendimento *</label>
+              <select id="f-tipo"><option value="">Selecione...</option></select>
+            </div>
           </div>
-          <div class="campo">
-            <label for="f-cpf">CPF</label>
-            <input id="f-cpf" type="text" inputmode="numeric" />
+          <div class="linha">
+            <div class="campo campo-grande">
+              <label for="f-obs">Observação (opcional)</label>
+              <input id="f-obs" type="text" placeholder="Detalhe adicional, se necessário" autocomplete="off" />
+            </div>
+          </div>
+          <div class="linha">
+            <button id="btn-registrar" class="btn btn-primario btn-grande">Registrar atendimento</button>
           </div>
         </div>
       </div>
+      <p id="registro-status" class="aviso oculta"></p>
 
       <div class="painel">
-        <h2>3. Dados do atendimento</h2>
-        <div class="linha">
-          <div class="campo">
-            <label for="f-data">Data *</label>
-            <input id="f-data" type="date" />
-          </div>
-          <div class="campo campo-grande">
-            <label for="f-tipo">Tipo de atendimento *</label>
-            <select id="f-tipo"></select>
-          </div>
-        </div>
-        <div class="linha">
-          <div class="campo campo-grande">
-            <label for="f-obs">Observação (opcional)</label>
-            <input id="f-obs" type="text" placeholder="Detalhe adicional, se necessário" />
-          </div>
-        </div>
-        <div class="linha">
-          <button id="btn-registrar" class="btn btn-primario">Registrar atendimento</button>
-          <button id="btn-limpar" class="btn btn-secundario">Limpar</button>
-        </div>
-        <p id="registro-status" class="dica"></p>
-      </div>
-
-      <div class="painel">
-        <h2>Histórico deste ano</h2>
+        <h2 id="historico-titulo">Histórico deste ano</h2>
         <table class="tabela">
           <thead>
-            <tr><th>Data</th><th>Tipo</th><th>Bairro</th><th>Observação</th><th>Ações</th></tr>
+            <tr><th>Data</th><th>Tipo</th><th>Bairro</th><th>Observação</th><th>Atendente</th><th></th></tr>
           </thead>
           <tbody id="historico-corpo">
-            <tr><td colspan="5" class="vazio">Busque ou registre um atendimento para ver o histórico.</td></tr>
+            <tr><td colspan="6" class="vazio">Busque uma pessoa para ver o histórico.</td></tr>
           </tbody>
         </table>
       </div>
@@ -130,7 +129,7 @@
         <p class="dica" id="c-pessoa-info"></p>
         <table class="tabela">
           <thead>
-            <tr><th>Data</th><th>Tipo</th><th>Bairro</th><th>Observação</th><th>Ações</th></tr>
+            <tr><th>Data</th><th>Tipo</th><th>Bairro</th><th>Observação</th><th>Atendente</th><th></th></tr>
           </thead>
           <tbody id="c-historico-corpo"></tbody>
         </table>
@@ -178,6 +177,7 @@
           </tbody>
           <tfoot>
             <tr><th id="resumo-total-rotulo">Total geral</th><th id="resumo-total-valor">—</th></tr>
+            <tr><th>Pessoas diferentes atendidas</th><th id="resumo-pessoas-valor">—</th></tr>
           </tfoot>
         </table>
       </div>
@@ -186,10 +186,10 @@
         <h2>Atendimentos do período</h2>
         <table class="tabela">
           <thead>
-            <tr><th>Data</th><th>Tipo</th><th>Nome</th><th>NIS</th><th>CPF</th><th>Bairro</th></tr>
+            <tr><th>Data</th><th>Tipo</th><th>Nome</th><th>NIS</th><th>CPF</th><th>Bairro</th><th>Atendente</th></tr>
           </thead>
           <tbody id="relatorio-corpo">
-            <tr><td colspan="6" class="vazio">Sem dados ainda.</td></tr>
+            <tr><td colspan="7" class="vazio">Sem dados ainda.</td></tr>
           </tbody>
         </table>
       </div>
@@ -197,6 +197,15 @@
   </main>
 
   <datalist id="lista-bairros"></datalist>
+  <datalist id="lista-atendentes"></datalist>
+
+  <dialog id="modal" class="modal">
+    <p id="modal-texto"></p>
+    <div class="modal-botoes">
+      <button id="modal-cancelar" class="btn">Cancelar</button>
+      <button id="modal-ok" class="btn btn-primario">OK</button>
+    </div>
+  </dialog>
 
   <script src="renderer.js"></script>
 </body>

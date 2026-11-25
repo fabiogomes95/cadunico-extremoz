@@ -10,6 +10,10 @@ const {
   validarDocumentos,
 } = require('./db');
 
+// Datas, calendário e textos do navegador interno sempre em português,
+// independente do idioma do Windows.
+app.commandLine.appendSwitch('lang', 'pt-BR');
+
 let db;
 let repo;
 let janelaPrincipal = null;
@@ -36,13 +40,18 @@ function formatarDataBR(iso) {
   return `${dia}/${mes}/${ano}`;
 }
 
+function formatarCPF(cpf) {
+  const d = String(cpf || '');
+  return d.length === 11 ? `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}` : d;
+}
+
 function escaparHtml(valor) {
   return String(valor ?? '').replace(/[&<>"']/g, (c) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
   }[c]));
 }
 
-function montarHtmlRelatorio({ dataInicio, dataFim, tipoRotulo, registros, porTipo }) {
+function montarHtmlRelatorio({ dataInicio, dataFim, tipoRotulo, registros, porTipo, pessoas }) {
   const linhasResumo = porTipo
     .map((r) => `<tr><td>${escaparHtml(rotuloTipo(r.tipo))}</td><td>${r.total}</td></tr>`)
     .join('');
@@ -53,15 +62,17 @@ function montarHtmlRelatorio({ dataInicio, dataFim, tipoRotulo, registros, porTi
         <td>${escaparHtml(rotuloTipo(r.tipo))}</td>
         <td>${escaparHtml(r.pessoa_nome)}</td>
         <td>${escaparHtml(r.nis || '')}</td>
-        <td>${escaparHtml(r.cpf || '')}</td>
+        <td>${escaparHtml(formatarCPF(r.cpf))}</td>
         <td>${escaparHtml(r.bairro || '')}</td>
+        <td>${escaparHtml(r.atendente || '')}</td>
       </tr>`
     )
     .join('');
 
   return `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8" /><style>
     * { box-sizing: border-box; }
-    body { font-family: Arial, sans-serif; color: #1f2937; padding: 28px; font-size: 12px; }
+    body { font-family: Arial, sans-serif; color: #1f2937; padding: 0; margin: 0; font-size: 12px; }
+    tr { break-inside: avoid; }
     h1 { font-size: 17px; color: #123a66; margin: 0 0 2px; }
     .subtitulo { color: #6b7280; margin: 0 0 18px; font-size: 12px; }
     h2 { font-size: 13px; color: #123a66; margin: 22px 0 8px; }
@@ -78,13 +89,14 @@ function montarHtmlRelatorio({ dataInicio, dataFim, tipoRotulo, registros, porTi
     <table>
       <thead><tr><th>Tipo</th><th>Total</th></tr></thead>
       <tbody>${linhasResumo || '<tr><td colspan="2">Nenhum atendimento no período.</td></tr>'}</tbody>
-      <tfoot><tr><td>Total geral</td><td>${registros.length}</td></tr></tfoot>
+      <tfoot><tr><td>Total geral</td><td>${registros.length}</td></tr>
+      <tr><td>Pessoas diferentes atendidas</td><td>${pessoas}</td></tr></tfoot>
     </table>
 
     <h2>Atendimentos do período</h2>
     <table>
-      <thead><tr><th>Data</th><th>Tipo</th><th>Nome</th><th>NIS</th><th>CPF</th><th>Bairro</th></tr></thead>
-      <tbody>${linhasDetalhe || '<tr><td colspan="6">Nenhum atendimento no período.</td></tr>'}</tbody>
+      <thead><tr><th>Data</th><th>Tipo</th><th>Nome</th><th>NIS</th><th>CPF</th><th>Bairro</th><th>Atendente</th></tr></thead>
+      <tbody>${linhasDetalhe || '<tr><td colspan="7">Nenhum atendimento no período.</td></tr>'}</tbody>
     </table>
 
     <p class="rodape">Gerado em ${new Date().toLocaleString('pt-BR')}</p>
@@ -139,8 +151,18 @@ ipcMain.handle('tipos:listar', () => TIPOS_ATENDIMENTO);
 
 ipcMain.handle('bairros:listar', () => repo.listarBairros());
 
+ipcMain.handle('atendentes:listar', () => repo.listarAtendentes());
+
 ipcMain.handle('pessoa:buscar', (_e, { nis, cpf }) => {
-  const pessoa = repo.buscarPessoaPorDocumento({ nis, cpf });
+  const { donoNis, donoCpf } = repo.donosDosDocumentos({ nis, cpf });
+  if (donoNis && donoCpf && donoNis.id !== donoCpf.id) {
+    return {
+      pessoa: null,
+      historico: [],
+      conflito: `O NIS é de ${donoNis.nome} e o CPF é de ${donoCpf.nome}. Busque só por um deles.`,
+    };
+  }
+  const pessoa = donoNis || donoCpf;
   if (!pessoa) return { pessoa: null, historico: [] };
   const anoAtual = new Date().getFullYear();
   const historico = repo.historicoDoAno(pessoa.id, anoAtual);
@@ -159,17 +181,19 @@ ipcMain.handle('pessoa:historicoCompleto', (_e, pessoaId) => {
 });
 
 ipcMain.handle('atendimento:registrar', (_e, payload) => {
-  const { nome, nis, cpf, bairro, data, tipo, obs, pessoaId } = payload;
+  const { nome, nis, cpf, bairro, data, tipo, obs, pessoaId, atendente, confirmarDuplicado } = payload;
 
   if (!nome || !nome.trim()) throw new Error('Informe o nome da pessoa.');
   const erroDoc = validarDocumentos({ nis, cpf });
   if (erroDoc) throw new Error(erroDoc);
   if (!data) throw new Error('Informe a data do atendimento.');
   if (!tipo) throw new Error('Selecione o tipo de atendimento.');
+  if (!atendente || !String(atendente).trim()) {
+    throw new Error('Informe o nome da atendente (no topo da tela).');
+  }
 
   // Proteção contra misturar cadastros: NIS e CPF são conferidos separadamente.
-  const donoNis = nis ? repo.buscarPessoaPorDocumento({ nis }) : null;
-  const donoCpf = cpf ? repo.buscarPessoaPorDocumento({ cpf }) : null;
+  const { donoNis, donoCpf } = repo.donosDosDocumentos({ nis, cpf });
   if (donoNis && donoCpf && donoNis.id !== donoCpf.id) {
     throw new Error(
       `O NIS é de ${donoNis.nome} e o CPF é de ${donoCpf.nome}. Confira os documentos.`
@@ -177,13 +201,20 @@ ipcMain.handle('atendimento:registrar', (_e, payload) => {
   }
   const dono = donoNis || donoCpf;
 
+  if (pessoaId && dono && dono.id !== pessoaId) {
+    throw new Error(
+      `Este NIS/CPF já pertence a ${dono.nome}. Clique em "Limpar" e busque a pessoa certa.`
+    );
+  }
+
+  // Aviso de duplicidade: mesma pessoa, mesma data, mesmo tipo.
+  const idExistente = pessoaId || (dono && dono.id);
+  if (idExistente && !confirmarDuplicado && repo.existeAtendimentoIgual({ pessoaId: idExistente, data, tipo })) {
+    return { duplicado: true };
+  }
+
   let pessoa;
   if (pessoaId) {
-    if (dono && dono.id !== pessoaId) {
-      throw new Error(
-        `Este NIS/CPF já pertence a ${dono.nome}. Clique em "Limpar" e busque a pessoa certa.`
-      );
-    }
     pessoa = repo.atualizarPessoa(pessoaId, { nome, nis, cpf, bairro });
   } else {
     const existente = dono;
@@ -198,6 +229,7 @@ ipcMain.handle('atendimento:registrar', (_e, payload) => {
     tipo,
     bairro,
     obs,
+    atendente,
   });
 
   const anoAtual = new Date().getFullYear();
@@ -242,6 +274,7 @@ ipcMain.handle('relatorio:gerar', (_e, { dataInicio, dataFim, tipo }) => {
     porTipo: porTipo.map((r) => ({ ...r, rotulo: rotuloTipo(r.tipo) })),
     porDia,
     total: registros.length,
+    pessoas: new Set(registros.map((r) => r.pessoa_id)).size,
   };
 });
 
@@ -264,8 +297,9 @@ ipcMain.handle('relatorio:exportar', async (_e, { dataInicio, dataFim, tipo }) =
     Tipo: rotuloTipo(r.tipo),
     Nome: r.pessoa_nome,
     NIS: r.nis || '',
-    CPF: r.cpf || '',
+    CPF: formatarCPF(r.cpf),
     Bairro: r.bairro || '',
+    Atendente: r.atendente || '',
     Observação: r.obs || '',
   }));
 
@@ -308,6 +342,7 @@ ipcMain.handle('relatorio:exportarPDF', async (_e, { dataInicio, dataFim, tipo }
     tipoRotulo: tipo ? rotuloTipo(tipo) : 'Todos',
     registros,
     porTipo,
+    pessoas: new Set(registros.map((r) => r.pessoa_id)).size,
   });
 
   const janelaPdf = new BrowserWindow({ show: false, webPreferences: { offscreen: true } });
@@ -316,7 +351,8 @@ ipcMain.handle('relatorio:exportarPDF', async (_e, { dataInicio, dataFim, tipo }
     const buffer = await janelaPdf.webContents.printToPDF({
       printBackground: true,
       pageSize: 'A4',
-      margins: { top: 0, bottom: 0, left: 0, right: 0 },
+      // Margem em polegadas (~1 cm), para não encostar na borda nas páginas seguintes.
+      margins: { top: 0.4, bottom: 0.4, left: 0.4, right: 0.4 },
     });
     fs.writeFileSync(filePath, buffer);
   } finally {

@@ -35,6 +35,19 @@ src/
 - **Atendimento**: pessoa, data, tipo (inclusão, atualização, transferência,
   consulta, folha resumo, declaração), bairro no momento, observação.
 
+## Como funciona o atendimento
+
+1. A atendente escreve o nome dela no topo (fica salvo no computador).
+2. Busca a pessoa por NIS ou CPF. O sistema mostra um cartão "Pessoa encontrada"
+   ou "Novo cadastro" e só então libera o formulário.
+3. Se o NIS/CPF for alterado depois da busca, o formulário some até buscar de novo
+   (impede registrar no cadastro de outra pessoa).
+4. Atendimento igual (mesma pessoa, data e tipo) pede confirmação.
+5. "Excluir" só aparece depois de clicar em "Editar", e pede confirmação.
+
+Busca por nome ignora acentos e maiúsculas ("jose" acha "José").
+Relatórios mostram total de atendimentos, pessoas diferentes e a atendente.
+
 ## Segurança dos dados
 
 - **Backup automático**: toda vez que o app abre, guarda uma cópia do dia em
@@ -56,6 +69,4 @@ SmartScreen na primeira instalação ("Mais informações" → "Executar assim m
 
 ## Próximos passos possíveis
 
-- Campo "atendente" (quem registrou).
-- Aviso de atendimento repetido (mesma pessoa, mesmo tipo, mesmo dia).
 - Versão em rede (FastAPI + PostgreSQL) se passar a ter mais de um computador.

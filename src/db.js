@@ -69,6 +69,12 @@ async function abrirBanco(dbPath) {
     CREATE INDEX IF NOT EXISTS idx_atendimentos_pessoa ON atendimentos(pessoa_id);
   `);
 
+  // Migração: coluna "atendente" (quem registrou). Bancos antigos não têm.
+  const colunas = consultarTodas(sqlDb, 'PRAGMA table_info(atendimentos)').map((c) => c.name);
+  if (!colunas.includes('atendente')) {
+    sqlDb.run('ALTER TABLE atendimentos ADD COLUMN atendente TEXT');
+  }
+
   return { sqlDb, dbPath };
 }
 
@@ -117,6 +123,19 @@ function normalizarDoc(valor) {
   if (!valor) return null;
   const digitos = String(valor).replace(/\D/g, '');
   return digitos.length ? digitos : null;
+}
+
+// Remove acentos e caixa, para a busca por nome achar "Jose" em "José".
+function semAcento(texto) {
+  return String(texto || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+}
+
+function limparTexto(valor) {
+  const t = String(valor || '').replace(/\s+/g, ' ').trim();
+  return t || null;
 }
 
 function cpfValido(cpf) {
@@ -193,16 +212,33 @@ class Repositorio {
     const bruto = (termo || '').trim();
     if (!bruto) return [];
     const digitos = normalizarDoc(bruto);
-    return consultarTodas(
-      this.sqlDb,
-      `SELECT * FROM pessoas
-       WHERE nome LIKE :nome
-          OR (:doc IS NOT NULL AND nis = :doc)
-          OR (:doc IS NOT NULL AND cpf = :doc)
-       ORDER BY nome ASC
-       LIMIT 50`,
-      { ':nome': `%${bruto}%`, ':doc': digitos }
-    );
+    // Só números (com ou sem pontuação): busca exata por NIS/CPF.
+    if (digitos && /^[\d.\-\s/]+$/.test(bruto)) {
+      return consultarTodas(
+        this.sqlDb,
+        'SELECT * FROM pessoas WHERE nis = :doc OR cpf = :doc ORDER BY nome ASC LIMIT 50',
+        { ':doc': digitos }
+      );
+    }
+    // Nome: ignora acentos e maiúsculas; cada palavra digitada precisa aparecer.
+    const palavras = semAcento(bruto).split(/\s+/).filter(Boolean);
+    return consultarTodas(this.sqlDb, 'SELECT * FROM pessoas')
+      .filter((p) => {
+        const nome = semAcento(p.nome);
+        return palavras.every((w) => nome.includes(w));
+      })
+      .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'))
+      .slice(0, 50);
+  }
+
+  // Quem é dono de cada documento (separadamente), para detectar mistura.
+  donosDosDocumentos({ nis, cpf }) {
+    const n = normalizarDoc(nis);
+    const c = normalizarDoc(cpf);
+    return {
+      donoNis: n ? consultarUma(this.sqlDb, 'SELECT * FROM pessoas WHERE nis = ? ORDER BY id DESC', [n]) : null,
+      donoCpf: c ? consultarUma(this.sqlDb, 'SELECT * FROM pessoas WHERE cpf = ? ORDER BY id DESC', [c]) : null,
+    };
   }
 
   // Todo o histórico de atendimentos de uma pessoa, sem filtrar por ano.
@@ -216,7 +252,7 @@ class Repositorio {
 
   criarPessoa({ nome, nis, cpf, bairro }) {
     this.sqlDb.run('INSERT INTO pessoas (nome, nis, cpf, bairro) VALUES (?, ?, ?, ?)', [
-      nome.trim(),
+      limparTexto(nome),
       normalizarDoc(nis),
       normalizarDoc(cpf),
       bairro ? bairro.trim() : null,
@@ -228,7 +264,7 @@ class Repositorio {
 
   atualizarPessoa(id, { nome, nis, cpf, bairro }) {
     this.sqlDb.run('UPDATE pessoas SET nome = ?, nis = ?, cpf = ?, bairro = ? WHERE id = ?', [
-      nome.trim(),
+      limparTexto(nome),
       normalizarDoc(nis),
       normalizarDoc(cpf),
       bairro ? bairro.trim() : null,
@@ -249,17 +285,31 @@ class Repositorio {
     );
   }
 
-  registrarAtendimento({ pessoaId, data, tipo, bairro, obs }) {
-    this.sqlDb.run('INSERT INTO atendimentos (pessoa_id, data, tipo, bairro, obs) VALUES (?, ?, ?, ?, ?)', [
-      pessoaId,
-      data,
-      tipo,
-      bairro ? bairro.trim() : null,
-      obs ? obs.trim() : null,
-    ]);
+  registrarAtendimento({ pessoaId, data, tipo, bairro, obs, atendente }) {
+    this.sqlDb.run(
+      'INSERT INTO atendimentos (pessoa_id, data, tipo, bairro, obs, atendente) VALUES (?, ?, ?, ?, ?, ?)',
+      [pessoaId, data, tipo, limparTexto(bairro), limparTexto(obs), limparTexto(atendente)]
+    );
     const id = consultarUma(this.sqlDb, 'SELECT last_insert_rowid() AS id').id;
     this.persistir();
     return consultarUma(this.sqlDb, 'SELECT * FROM atendimentos WHERE id = ?', [id]);
+  }
+
+  // Já existe atendimento igual (mesma pessoa, data e tipo)? Evita duplicidade.
+  existeAtendimentoIgual({ pessoaId, data, tipo }) {
+    return !!consultarUma(
+      this.sqlDb,
+      'SELECT id FROM atendimentos WHERE pessoa_id = ? AND data = ? AND tipo = ? LIMIT 1',
+      [pessoaId, data, tipo]
+    );
+  }
+
+  listarAtendentes() {
+    return consultarTodas(
+      this.sqlDb,
+      `SELECT DISTINCT atendente FROM atendimentos
+       WHERE atendente IS NOT NULL AND atendente <> '' ORDER BY atendente`
+    ).map((l) => l.atendente);
   }
 
   buscarAtendimentoPorId(id) {
@@ -313,7 +363,7 @@ class Repositorio {
     }
     return consultarTodas(
       this.sqlDb,
-      `SELECT a.id, a.data, a.tipo, a.bairro, a.obs,
+      `SELECT a.id, a.data, a.tipo, a.bairro, a.obs, a.atendente, a.pessoa_id,
               p.nome AS pessoa_nome, p.nis, p.cpf
        FROM atendimentos a
        JOIN pessoas p ON p.id = a.pessoa_id
@@ -348,6 +398,7 @@ class Repositorio {
 }
 
 module.exports = {
+  semAcento,
   abrirBanco,
   Repositorio,
   TIPOS_ATENDIMENTO,
