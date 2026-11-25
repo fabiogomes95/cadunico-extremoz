@@ -2,6 +2,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('api', {
   listarTipos: () => ipcRenderer.invoke('tipos:listar'),
+  listarAtendentes: () => ipcRenderer.invoke('atendentes:listar'),
   listarBairros: () => ipcRenderer.invoke('bairros:listar'),
   buscarPessoa: (doc) => ipcRenderer.invoke('pessoa:buscar', doc),
   pesquisarPessoas: (termo) => ipcRenderer.invoke('pessoa:pesquisar', termo),

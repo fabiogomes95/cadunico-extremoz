@@ -3,13 +3,19 @@
 
 const el = (id) => document.getElementById(id);
 
-let pessoaAtualId = null; // id da pessoa carregada no formulário, para não duplicar cadastro
-let pessoaCarregada = null; // NIS/CPF da pessoa carregada, para detectar troca de pessoa
-let pessoaHistoricoId = null; // pessoa cujo histórico está na tela (aba Novo Atendimento)
-let pessoaConsultaId = null; // pessoa aberta na aba "Consultar Pessoa"
 let tipos = [];
-let historicoAnoAtual = []; // cache do histórico mostrado na aba "Novo Atendimento"
-let historicoCompletoAtual = []; // cache do histórico mostrado na aba "Consultar Pessoa"
+
+// Estado da aba "Novo Atendimento"
+let buscaAtual = null; // { nis, cpf } exatamente como estavam quando a busca foi feita
+let pessoaAtual = null; // pessoa encontrada na busca (null = novo cadastro)
+let historicoAnoAtual = [];
+let pessoaHistoricoId = null; // de quem é o histórico exibido
+
+// Estado da aba "Consultar Pessoa"
+let pessoaConsultaId = null;
+let historicoCompletoAtual = [];
+
+// ---------- Utilitários ----------
 
 // Data local (não UTC): com toISOString, depois das 21h o Brasil já viraria "amanhã".
 function dataISO(d) {
@@ -17,22 +23,10 @@ function dataISO(d) {
   const dia = String(d.getDate()).padStart(2, '0');
   return `${d.getFullYear()}-${mes}-${dia}`;
 }
-
-function hojeISO() {
-  return dataISO(new Date());
-}
-
-function soDigitos(valor) {
-  return String(valor || '').replace(/\D/g, '');
-}
-
-// Tira o prefixo técnico do Electron ("Error invoking remote method ...: Error: ").
-function mensagemErro(erro) {
-  return String(erro && erro.message ? erro.message : erro).replace(/^.*Error: /, '');
-}
+const hojeISO = () => dataISO(new Date());
 
 function formatarDataBR(iso) {
-  const [ano, mes, dia] = iso.split('-');
+  const [ano, mes, dia] = String(iso).split('-');
   return `${dia}/${mes}/${ano}`;
 }
 
@@ -47,9 +41,77 @@ function escaparHtml(valor) {
   }[c]));
 }
 
-function formatarDoc(valor) {
-  return valor ? escaparHtml(valor) : '—';
+const soDigitos = (valor) => String(valor || '').replace(/\D/g, '');
+
+function formatarCPF(cpf) {
+  const d = soDigitos(cpf);
+  return d.length === 11 ? `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}` : d;
 }
+
+const mostrarDoc = (v) => (v ? escaparHtml(v) : '—');
+
+function cpfValido(cpf) {
+  if (!/^\d{11}$/.test(cpf) || /^(\d)\1{10}$/.test(cpf)) return false;
+  const dv = (base) => {
+    let soma = 0;
+    for (let i = 0; i < base.length; i++) soma += Number(base[i]) * (base.length + 1 - i);
+    const resto = (soma * 10) % 11;
+    return resto === 10 ? 0 : resto;
+  };
+  return dv(cpf.slice(0, 9)) === Number(cpf[9]) && dv(cpf.slice(0, 10)) === Number(cpf[10]);
+}
+
+// Tira o prefixo técnico do Electron ("Error invoking remote method ...: Error: ").
+function mensagemErro(erro) {
+  return String(erro && erro.message ? erro.message : erro).replace(/^.*Error: /, '');
+}
+
+function setDica(id, texto, tipo = '') {
+  const p = el(id);
+  p.textContent = texto;
+  p.className = 'dica' + (tipo ? ' ' + tipo : '');
+}
+
+// ---------- Janela de aviso/confirmação (no lugar do alert/confirm do Windows) ----------
+
+function abrirModal(texto, { ok = 'OK', cancelar = null, perigo = false } = {}) {
+  return new Promise((resolve) => {
+    const modal = el('modal');
+    if (modal.open) {
+      // Já há uma janela aberta: não empilha outra (evita travar a tela).
+      console.error('Aviso não exibido (outra janela aberta):', texto);
+      resolve(false);
+      return;
+    }
+    el('modal-texto').textContent = texto;
+    const btnOk = el('modal-ok');
+    const btnCancelar = el('modal-cancelar');
+    btnOk.textContent = ok;
+    btnOk.className = 'btn ' + (perigo ? 'btn-perigo-cheio' : 'btn-primario');
+    btnCancelar.classList.toggle('oculta', !cancelar);
+    if (cancelar) btnCancelar.textContent = cancelar;
+
+    const fechar = (valor) => {
+      btnOk.onclick = null;
+      btnCancelar.onclick = null;
+      modal.onclose = null;
+      if (modal.open) modal.close();
+      resolve(valor);
+    };
+    btnOk.onclick = () => fechar(true);
+    btnCancelar.onclick = () => fechar(false);
+    modal.onclose = () => fechar(false); // tecla Esc
+    modal.showModal();
+    (cancelar ? btnCancelar : btnOk).focus();
+  });
+}
+const avisar = (texto) => abrirModal(texto);
+const confirmar = (texto, opcoes) => abrirModal(texto, { cancelar: 'Cancelar', ...opcoes });
+
+// Qualquer erro inesperado aparece na tela em vez de sumir em silêncio.
+window.addEventListener('unhandledrejection', (ev) => {
+  avisar('Ocorreu um erro inesperado:\n' + mensagemErro(ev.reason) + '\n\nSe repetir, chame o TI.');
+});
 
 // ---------- Navegação entre abas ----------
 document.querySelectorAll('.aba-btn').forEach((btn) => {
@@ -61,33 +123,62 @@ document.querySelectorAll('.aba-btn').forEach((btn) => {
   });
 });
 
-// ---------- Inicialização ----------
-async function atualizarListaBairros() {
-  const bairros = await window.api.listarBairros();
-  const datalist = el('lista-bairros');
-  datalist.innerHTML = bairros.map((b) => `<option value="${escaparHtml(b)}"></option>`).join('');
+// ---------- Atendente (fica salvo neste computador) ----------
+
+function lerAtendenteSalvo() {
+  try {
+    return localStorage.getItem('atendente') || '';
+  } catch {
+    return '';
+  }
 }
+
+el('atendente').addEventListener('change', () => {
+  const nome = el('atendente').value.trim();
+  el('atendente').value = nome;
+  el('atendente').classList.toggle('faltando', !nome);
+  try {
+    localStorage.setItem('atendente', nome);
+  } catch {
+    /* sem armazenamento: só não lembra na próxima vez */
+  }
+});
+
+async function atualizarListas() {
+  const [bairros, atendentes] = await Promise.all([
+    window.api.listarBairros(),
+    window.api.listarAtendentes(),
+  ]);
+  el('lista-bairros').innerHTML = bairros.map((b) => `<option value="${escaparHtml(b)}"></option>`).join('');
+  el('lista-atendentes').innerHTML = atendentes
+    .map((a) => `<option value="${escaparHtml(a)}"></option>`)
+    .join('');
+}
+
+// ---------- Inicialização ----------
 
 async function iniciar() {
   tipos = await window.api.listarTipos();
-  const selTipo = el('f-tipo');
-  const selFiltro = el('r-tipo');
   tipos.forEach((t) => {
-    selTipo.append(new Option(t.rotulo, t.valor));
-    selFiltro.append(new Option(t.rotulo, t.valor));
+    el('f-tipo').append(new Option(t.rotulo, t.valor));
+    el('r-tipo').append(new Option(t.rotulo, t.valor));
   });
 
-  await atualizarListaBairros();
+  await atualizarListas();
+
+  el('atendente').value = lerAtendenteSalvo();
+  el('atendente').classList.toggle('faltando', !el('atendente').value);
 
   el('f-data').value = hojeISO();
-
-  const primeiroDiaAno = `${new Date().getFullYear()}-01-01`;
-  el('r-inicio').value = primeiroDiaAno;
+  el('r-inicio').value = `${new Date().getFullYear()}-01-01`;
   el('r-fim').value = hojeISO();
+  el('busca-nis').focus();
 }
 iniciar();
 
-// ---------- Tabela de histórico editável (reaproveitada nas duas abas) ----------
+// ---------- Tabela de histórico (reaproveitada nas duas abas) ----------
+// Na linha normal só existe "Editar". "Excluir" fica dentro da edição,
+// longe do clique do dia a dia, e pede confirmação.
 
 function linhaAtendimentoHTML(a) {
   return `<tr data-id="${a.id}">
@@ -95,32 +186,31 @@ function linhaAtendimentoHTML(a) {
     <td>${escaparHtml(rotuloTipo(a.tipo))}</td>
     <td>${escaparHtml(a.bairro || '')}</td>
     <td>${escaparHtml(a.obs || '')}</td>
+    <td>${escaparHtml(a.atendente || '')}</td>
     <td class="acoes">
       <button class="btn btn-mini" data-acao="editar" data-id="${a.id}">Editar</button>
-      <button class="btn btn-mini btn-perigo" data-acao="excluir" data-id="${a.id}">Excluir</button>
     </td>
   </tr>`;
 }
 
 function linhaEdicaoHTML(a) {
   const opcoesTipo = tipos
-    .map((t) => `<option value="${t.valor}" ${t.valor === a.tipo ? 'selected' : ''}>${t.rotulo}</option>`)
+    .map((t) => `<option value="${t.valor}" ${t.valor === a.tipo ? 'selected' : ''}>${escaparHtml(t.rotulo)}</option>`)
     .join('');
   return `<tr data-id="${a.id}">
-    <td><input type="date" class="edit-data" value="${a.data}" /></td>
+    <td><input type="date" class="edit-data" value="${escaparHtml(a.data)}" /></td>
     <td><select class="edit-tipo">${opcoesTipo}</select></td>
     <td><input type="text" class="edit-bairro" list="lista-bairros" value="${escaparHtml(a.bairro || '')}" /></td>
     <td><input type="text" class="edit-obs" value="${escaparHtml(a.obs || '')}" /></td>
+    <td>${escaparHtml(a.atendente || '')}</td>
     <td class="acoes">
       <button class="btn btn-mini btn-primario" data-acao="salvar" data-id="${a.id}">Salvar</button>
       <button class="btn btn-mini" data-acao="cancelar" data-id="${a.id}">Cancelar</button>
+      <button class="btn btn-mini btn-perigo" data-acao="excluir" data-id="${a.id}">Excluir</button>
     </td>
   </tr>`;
 }
 
-// Liga os cliques de Editar/Excluir/Salvar/Cancelar de uma tabela de histórico.
-// `obterLista` retorna o array atualmente exibido (para achar o atendimento ao
-// editar); `recarregar` busca os dados de novo e redesenha a tabela.
 function ligarAcoesHistorico(corpoEl, obterLista, recarregar) {
   corpoEl.addEventListener('click', async (ev) => {
     const btn = ev.target.closest('[data-acao]');
@@ -128,13 +218,12 @@ function ligarAcoesHistorico(corpoEl, obterLista, recarregar) {
     const id = Number(btn.dataset.id);
     const acao = btn.dataset.acao;
     const tr = btn.closest('tr');
+    const atendimento = obterLista().find((a) => a.id === id);
 
     if (acao === 'editar') {
-      const atendimento = obterLista().find((a) => a.id === id);
-      if (!atendimento) return;
-      tr.outerHTML = linhaEdicaoHTML(atendimento);
+      if (atendimento) tr.outerHTML = linhaEdicaoHTML(atendimento);
     } else if (acao === 'cancelar') {
-      recarregar();
+      await recarregar();
     } else if (acao === 'salvar') {
       const payload = {
         data: tr.querySelector('.edit-data').value,
@@ -144,13 +233,20 @@ function ligarAcoesHistorico(corpoEl, obterLista, recarregar) {
       };
       try {
         await window.api.atualizarAtendimento(id, payload);
-        await atualizarListaBairros();
+        await atualizarListas();
         await recarregar();
       } catch (erro) {
-        alert('Não foi possível salvar: ' + mensagemErro(erro));
+        await avisar('Não foi possível salvar: ' + mensagemErro(erro));
       }
     } else if (acao === 'excluir') {
-      if (!confirm('Excluir este atendimento? Essa ação não pode ser desfeita.')) return;
+      const descricao = atendimento
+        ? `${rotuloTipo(atendimento.tipo)} de ${formatarDataBR(atendimento.data)}`
+        : 'este atendimento';
+      const ok = await confirmar(
+        `Excluir o atendimento "${descricao}"?\n\nEssa ação não pode ser desfeita.`,
+        { ok: 'Excluir', perigo: true }
+      );
+      if (!ok) return;
       await window.api.excluirAtendimento(id);
       await recarregar();
     }
@@ -159,131 +255,200 @@ function ligarAcoesHistorico(corpoEl, obterLista, recarregar) {
 
 // ---------- Aba: Novo Atendimento ----------
 
-function preencherFormPessoa(pessoa) {
-  pessoaAtualId = pessoa ? pessoa.id : null;
-  pessoaCarregada = pessoa ? { nis: pessoa.nis || '', cpf: pessoa.cpf || '' } : null;
-  el('f-nome').value = pessoa ? pessoa.nome : '';
-  el('f-bairro').value = pessoa ? pessoa.bairro || '' : '';
-  el('f-nis').value = pessoa ? pessoa.nis || '' : '';
-  el('f-cpf').value = pessoa ? pessoa.cpf || '' : '';
-}
-
-function renderHistorico(historico, pessoaId = null) {
-  pessoaHistoricoId = pessoaId;
+function renderHistorico(historico, pessoaId = null, nome = '') {
   historicoAnoAtual = historico || [];
-  const corpo = el('historico-corpo');
-  corpo.innerHTML = historicoAnoAtual.length
+  pessoaHistoricoId = pessoaId;
+  el('historico-titulo').textContent = nome ? `Histórico deste ano — ${nome}` : 'Histórico deste ano';
+  el('historico-corpo').innerHTML = historicoAnoAtual.length
     ? historicoAnoAtual.map(linhaAtendimentoHTML).join('')
-    : '<tr><td colspan="5" class="vazio">Nenhum atendimento registrado neste ano.</td></tr>';
+    : `<tr><td colspan="6" class="vazio">${
+        pessoaId ? 'Nenhum atendimento registrado neste ano.' : 'Busque uma pessoa para ver o histórico.'
+      }</td></tr>`;
 }
 
 async function recarregarHistoricoAno() {
   if (!pessoaHistoricoId) return;
-  const { atendimentos } = await window.api.historicoCompleto(pessoaHistoricoId);
+  const { pessoa, atendimentos } = await window.api.historicoCompleto(pessoaHistoricoId);
   const ano = String(new Date().getFullYear());
   renderHistorico(
     atendimentos.filter((a) => a.data.startsWith(ano)),
-    pessoaHistoricoId
+    pessoaHistoricoId,
+    pessoa ? pessoa.nome : ''
   );
-}
-
-// Limpa só os campos de pessoa/atendimento, para o próximo da fila.
-function limparFormulario() {
-  el('busca-nis').value = '';
-  el('busca-cpf').value = '';
-  preencherFormPessoa(null);
-  el('f-data').value = hojeISO();
-  el('f-tipo').selectedIndex = 0;
-  el('f-obs').value = '';
-  el('busca-status').textContent = '';
+  if (pessoaAtual && pessoa && pessoaAtual.id === pessoa.id) mostrarCartao(pessoa, historicoAnoAtual.length);
 }
 
 ligarAcoesHistorico(el('historico-corpo'), () => historicoAnoAtual, recarregarHistoricoAno);
 
-el('btn-buscar').addEventListener('click', async () => {
-  const nis = el('busca-nis').value.trim();
-  const cpf = el('busca-cpf').value.trim();
-  const status = el('busca-status');
-
-  if (!nis && !cpf) {
-    status.textContent = 'Informe o NIS ou o CPF para buscar.';
-    status.className = 'dica erro';
-    return;
+function mostrarCartao(pessoa, qtdAno) {
+  const cartao = el('cartao-pessoa');
+  cartao.classList.remove('oculta');
+  if (pessoa) {
+    cartao.className = 'cartao encontrada';
+    cartao.innerHTML = `
+      <div class="cartao-titulo">Pessoa encontrada</div>
+      <div class="cartao-nome">${escaparHtml(pessoa.nome)}</div>
+      <div class="cartao-info">NIS: ${mostrarDoc(pessoa.nis)} &nbsp;·&nbsp; CPF: ${mostrarDoc(formatarCPF(pessoa.cpf))}
+        &nbsp;·&nbsp; Bairro: ${mostrarDoc(pessoa.bairro)} &nbsp;·&nbsp; ${qtdAno} atendimento(s) este ano</div>`;
+  } else {
+    cartao.className = 'cartao';
+    cartao.innerHTML = `
+      <div class="cartao-titulo">Novo cadastro</div>
+      <div class="cartao-nome">Pessoa ainda não cadastrada</div>
+      <div class="cartao-info">Preencha o nome completo e o bairro abaixo.</div>`;
   }
+}
 
-  status.textContent = 'Buscando...';
-  status.className = 'dica';
-
-  const { pessoa, historico } = await window.api.buscarPessoa({ nis, cpf });
-
-  if (!pessoa) {
-    status.textContent = 'Nenhum cadastro encontrado. Preencha os dados abaixo para um novo atendimento.';
-    status.className = 'dica';
-    preencherFormPessoa(null);
-    el('f-nis').value = nis;
-    el('f-cpf').value = cpf;
-    renderHistorico([]);
-    return;
+// Volta a aba ao estado inicial (pronta para o próximo da fila).
+function resetarAtendimento({ manterDocs = false } = {}) {
+  buscaAtual = null;
+  pessoaAtual = null;
+  if (!manterDocs) {
+    el('busca-nis').value = '';
+    el('busca-cpf').value = '';
   }
+  el('cartao-pessoa').classList.add('oculta');
+  el('bloco-registro').classList.add('oculta');
+  el('f-nome').value = '';
+  el('f-bairro').value = '';
+  el('f-data').value = hojeISO();
+  el('f-tipo').value = '';
+  el('f-obs').value = '';
+  setDica('busca-status', 'Digite o NIS ou o CPF e aperte Enter.');
+}
 
-  status.textContent = `Cadastro encontrado: ${pessoa.nome}.`;
-  status.className = 'dica ok';
-  preencherFormPessoa(pessoa);
-  renderHistorico(historico, pessoa.id);
-});
+function esconderAvisoRegistro() {
+  el('registro-status').className = 'aviso oculta';
+}
 
+function mostrarAvisoRegistro(texto, tipo) {
+  const p = el('registro-status');
+  p.textContent = texto;
+  p.className = 'aviso ' + tipo;
+}
+
+// Se mexerem no NIS/CPF depois de buscar, é obrigatório buscar de novo
+// (evita registrar no cadastro de outra pessoa).
 ['busca-nis', 'busca-cpf'].forEach((id) => {
+  el(id).addEventListener('input', () => {
+    if (!buscaAtual) return;
+    const mudou =
+      soDigitos(el('busca-nis').value) !== buscaAtual.nis ||
+      soDigitos(el('busca-cpf').value) !== buscaAtual.cpf;
+    if (mudou) {
+      resetarAtendimento({ manterDocs: true });
+      setDica('busca-status', 'Documento alterado. Aperte Enter ou clique em Buscar.');
+    }
+  });
   el(id).addEventListener('keydown', (ev) => {
     if (ev.key === 'Enter') el('btn-buscar').click();
   });
 });
 
-el('btn-limpar').addEventListener('click', () => {
-  limparFormulario();
-  el('registro-status').textContent = '';
-  renderHistorico([]);
+el('btn-buscar').addEventListener('click', async () => {
+  esconderAvisoRegistro();
+  const nis = soDigitos(el('busca-nis').value);
+  const cpf = soDigitos(el('busca-cpf').value);
+
+  if (!nis && !cpf) return setDica('busca-status', 'Informe o NIS ou o CPF para buscar.', 'erro');
+  if (nis && nis.length !== 11) {
+    return setDica('busca-status', `O NIS precisa ter 11 números (foram digitados ${nis.length}).`, 'erro');
+  }
+  if (cpf && !cpfValido(cpf)) return setDica('busca-status', 'CPF inválido. Confira os números.', 'erro');
+
+  setDica('busca-status', 'Buscando...');
+  const { pessoa, historico, conflito } = await window.api.buscarPessoa({ nis, cpf });
+
+  if (conflito) {
+    resetarAtendimento({ manterDocs: true });
+    return setDica('busca-status', conflito, 'erro');
+  }
+
+  pessoaAtual = pessoa;
+  // Completa os documentos com o que já está no cadastro (sem apagar o que foi digitado).
+  const nisFinal = (pessoa && pessoa.nis) || nis;
+  const cpfFinal = (pessoa && pessoa.cpf) || cpf;
+  el('busca-nis').value = nisFinal;
+  el('busca-cpf').value = cpfFinal;
+  buscaAtual = { nis: nisFinal, cpf: cpfFinal };
+
+  el('f-nome').value = pessoa ? pessoa.nome : '';
+  el('f-bairro').value = pessoa ? pessoa.bairro || '' : '';
+  el('f-data').value = hojeISO();
+  el('f-tipo').value = '';
+  el('f-obs').value = '';
+
+  mostrarCartao(pessoa, (historico || []).length);
+  renderHistorico(historico, pessoa ? pessoa.id : null, pessoa ? pessoa.nome : '');
+  el('bloco-registro').classList.remove('oculta');
+  setDica('busca-status', '');
+  (pessoa ? el('f-tipo') : el('f-nome')).focus();
 });
 
-// Se NIS e CPF digitados não batem com nenhum documento da pessoa carregada,
-// é outra pessoa: não reaproveita o id (evita gravar por cima do cadastro anterior).
-function idPessoaParaRegistro() {
-  if (!pessoaAtualId || !pessoaCarregada) return null;
-  const nis = soDigitos(el('f-nis').value);
-  const cpf = soDigitos(el('f-cpf').value);
-  const bateNis = nis && nis === pessoaCarregada.nis;
-  const bateCpf = cpf && cpf === pessoaCarregada.cpf;
-  const semDocAntigo = !pessoaCarregada.nis && !pessoaCarregada.cpf;
-  return bateNis || bateCpf || semDocAntigo ? pessoaAtualId : null;
-}
+el('btn-limpar').addEventListener('click', () => {
+  resetarAtendimento();
+  esconderAvisoRegistro();
+  renderHistorico([]);
+  el('busca-nis').focus();
+});
 
 el('btn-registrar').addEventListener('click', async () => {
-  const status = el('registro-status');
+  esconderAvisoRegistro();
+  const atendente = el('atendente').value.trim();
+  if (!atendente) {
+    el('atendente').classList.add('faltando');
+    el('atendente').focus();
+    return mostrarAvisoRegistro('Escreva seu nome no campo "Atendente", no topo da tela.', 'erro');
+  }
+  if (!buscaAtual) return mostrarAvisoRegistro('Busque a pessoa pelo NIS ou CPF primeiro.', 'erro');
+  if (!el('f-nome').value.trim()) {
+    el('f-nome').focus();
+    return mostrarAvisoRegistro('Preencha o nome completo da pessoa.', 'erro');
+  }
+  if (!el('f-tipo').value) {
+    el('f-tipo').focus();
+    return mostrarAvisoRegistro('Selecione o tipo de atendimento.', 'erro');
+  }
+
   const payload = {
-    pessoaId: idPessoaParaRegistro(),
+    pessoaId: pessoaAtual ? pessoaAtual.id : null,
     nome: el('f-nome').value,
-    nis: el('f-nis').value,
-    cpf: el('f-cpf').value,
+    nis: buscaAtual.nis,
+    cpf: buscaAtual.cpf,
     bairro: el('f-bairro').value,
     data: el('f-data').value,
     tipo: el('f-tipo').value,
     obs: el('f-obs').value,
+    atendente,
   };
 
+  const btn = el('btn-registrar');
+  btn.disabled = true; // evita duplo clique
   try {
-    status.textContent = 'Registrando...';
-    status.className = 'dica';
-    const { pessoa, historico } = await window.api.registrarAtendimento(payload);
-    // Formulário volta limpo para o próximo atendimento; o histórico de quem
-    // acabou de ser atendido continua visível embaixo.
-    limparFormulario();
-    renderHistorico(historico, pessoa.id);
-    status.textContent = `Atendimento registrado para ${pessoa.nome}. Formulário pronto para o próximo.`;
-    status.className = 'dica ok';
-    await atualizarListaBairros();
+    let resultado = await window.api.registrarAtendimento(payload);
+    if (resultado.duplicado) {
+      const ok = await confirmar(
+        `Esta pessoa já tem um atendimento de "${rotuloTipo(payload.tipo)}" em ${formatarDataBR(payload.data)}.\n\n` +
+          'Registrar outro mesmo assim?',
+        { ok: 'Registrar mesmo assim' }
+      );
+      if (!ok) return mostrarAvisoRegistro('Nada foi registrado (atendimento repetido).', 'erro');
+      resultado = await window.api.registrarAtendimento({ ...payload, confirmarDuplicado: true });
+    }
+
+    const { pessoa, historico } = resultado;
+    resetarAtendimento();
+    renderHistorico(historico, pessoa.id, pessoa.nome);
+    mostrarAvisoRegistro(
+      `Atendimento registrado para ${pessoa.nome}. Pronto para o próximo.`,
+      'ok'
+    );
+    await atualizarListas();
     el('busca-nis').focus();
   } catch (erro) {
-    status.textContent = mensagemErro(erro);
-    status.className = 'dica erro';
+    mostrarAvisoRegistro(mensagemErro(erro), 'erro');
+  } finally {
+    btn.disabled = false;
   }
 });
 
@@ -301,62 +466,50 @@ async function abrirHistoricoCompleto(pessoaId) {
 
   el('c-pessoa-nome').textContent = pessoa.nome;
   el('c-pessoa-info').textContent =
-    `NIS: ${pessoa.nis || '—'}  ·  CPF: ${pessoa.cpf || '—'}  ·  Bairro: ${pessoa.bairro || '—'}` +
+    `NIS: ${pessoa.nis || '—'}  ·  CPF: ${formatarCPF(pessoa.cpf) || '—'}  ·  Bairro: ${pessoa.bairro || '—'}` +
     `  ·  ${atendimentos.length} atendimento(s) no total (todos os anos)`;
 
-  const corpo = el('c-historico-corpo');
-  corpo.innerHTML = atendimentos.length
+  el('c-historico-corpo').innerHTML = atendimentos.length
     ? atendimentos.map(linhaAtendimentoHTML).join('')
-    : '<tr><td colspan="5" class="vazio">Nenhum atendimento registrado.</td></tr>';
+    : '<tr><td colspan="6" class="vazio">Nenhum atendimento registrado.</td></tr>';
 }
 
 async function recarregarHistoricoCompleto() {
-  if (!pessoaConsultaId) return;
-  await abrirHistoricoCompleto(pessoaConsultaId);
+  if (pessoaConsultaId) await abrirHistoricoCompleto(pessoaConsultaId);
 }
 
 ligarAcoesHistorico(el('c-historico-corpo'), () => historicoCompletoAtual, recarregarHistoricoCompleto);
 
 el('c-btn-buscar').addEventListener('click', async () => {
   const termo = el('c-termo').value.trim();
-  const status = el('c-status');
   el('c-painel-resultados').classList.add('oculta');
   el('c-painel-pessoa').classList.add('oculta');
 
-  if (!termo) {
-    status.textContent = 'Digite um nome, NIS ou CPF para pesquisar.';
-    status.className = 'dica erro';
-    return;
-  }
+  if (!termo) return setDica('c-status', 'Digite um nome, NIS ou CPF para pesquisar.', 'erro');
 
-  status.textContent = 'Pesquisando...';
-  status.className = 'dica';
-
+  setDica('c-status', 'Pesquisando...');
   const resultados = await window.api.pesquisarPessoas(termo);
 
-  if (resultados.length === 0) {
-    status.textContent = 'Nenhuma pessoa encontrada.';
-    status.className = 'dica erro';
-    return;
-  }
+  if (resultados.length === 0) return setDica('c-status', 'Nenhuma pessoa encontrada.', 'erro');
 
   if (resultados.length === 1) {
-    status.textContent = '';
-    await abrirHistoricoCompleto(resultados[0].id);
-    return;
+    setDica('c-status', '');
+    return abrirHistoricoCompleto(resultados[0].id);
   }
 
-  status.textContent = `${resultados.length} pessoa(s) encontrada(s). Clique numa linha para ver o histórico.`;
-  status.className = 'dica';
+  setDica(
+    'c-status',
+    `${resultados.length === 50 ? 'Mais de 50' : resultados.length} pessoa(s) encontrada(s). Clique numa linha para ver o histórico.`
+  );
   el('c-painel-resultados').classList.remove('oculta');
   const corpo = el('c-resultados-corpo');
   corpo.innerHTML = resultados
     .map(
       (p) => `<tr class="resultado-linha" data-id="${p.id}">
         <td>${escaparHtml(p.nome)}</td>
-        <td>${formatarDoc(p.nis)}</td>
-        <td>${formatarDoc(p.cpf)}</td>
-        <td>${formatarDoc(p.bairro)}</td>
+        <td>${mostrarDoc(p.nis)}</td>
+        <td>${mostrarDoc(formatarCPF(p.cpf))}</td>
+        <td>${mostrarDoc(p.bairro)}</td>
         <td>Ver histórico →</td>
       </tr>`
     )
@@ -378,15 +531,13 @@ document.querySelectorAll('.btn-chip').forEach((btn) => {
     const hoje = new Date();
     if (btn.dataset.periodo === 'hoje') {
       el('r-inicio').value = hojeISO();
-      el('r-fim').value = hojeISO();
     } else if (btn.dataset.periodo === 'mes') {
-      const inicio = dataISO(new Date(hoje.getFullYear(), hoje.getMonth(), 1));
-      el('r-inicio').value = inicio;
-      el('r-fim').value = hojeISO();
+      el('r-inicio').value = dataISO(new Date(hoje.getFullYear(), hoje.getMonth(), 1));
     } else if (btn.dataset.periodo === 'ano') {
       el('r-inicio').value = `${hoje.getFullYear()}-01-01`;
-      el('r-fim').value = hojeISO();
     }
+    el('r-fim').value = hojeISO();
+    el('btn-gerar').click();
   });
 });
 
@@ -398,29 +549,32 @@ function filtrosRelatorio() {
   };
 }
 
-el('btn-gerar').addEventListener('click', async () => {
-  const status = el('relatorio-status');
-  const filtros = filtrosRelatorio();
-
+function periodoValido(filtros) {
   if (!filtros.dataInicio || !filtros.dataFim) {
-    status.textContent = 'Informe o período (de/até).';
-    status.className = 'dica erro';
-    return;
+    setDica('relatorio-status', 'Informe o período (de/até).', 'erro');
+    return false;
   }
+  if (filtros.dataInicio > filtros.dataFim) {
+    setDica('relatorio-status', 'A data "De" está depois da data "Até".', 'erro');
+    return false;
+  }
+  return true;
+}
 
-  status.textContent = 'Gerando...';
-  status.className = 'dica';
+el('btn-gerar').addEventListener('click', async () => {
+  const filtros = filtrosRelatorio();
+  if (!periodoValido(filtros)) return;
 
-  const { registros, porTipo, total } = await window.api.gerarRelatorio(filtros);
+  setDica('relatorio-status', 'Gerando...');
+  const { registros, porTipo, total, pessoas } = await window.api.gerarRelatorio(filtros);
 
-  const resumoCorpo = el('resumo-corpo');
-  resumoCorpo.innerHTML = porTipo.length
+  el('resumo-corpo').innerHTML = porTipo.length
     ? porTipo.map((r) => `<tr><td>${escaparHtml(r.rotulo)}</td><td>${r.total}</td></tr>`).join('')
     : '<tr><td colspan="2" class="vazio">Nenhum atendimento no período.</td></tr>';
   el('resumo-total-valor').textContent = total;
+  el('resumo-pessoas-valor').textContent = pessoas;
 
-  const relCorpo = el('relatorio-corpo');
-  relCorpo.innerHTML = registros.length
+  el('relatorio-corpo').innerHTML = registros.length
     ? registros
         .map(
           (r) => `<tr>
@@ -428,68 +582,39 @@ el('btn-gerar').addEventListener('click', async () => {
             <td>${escaparHtml(rotuloTipo(r.tipo))}</td>
             <td>${escaparHtml(r.pessoa_nome)}</td>
             <td>${escaparHtml(r.nis || '')}</td>
-            <td>${escaparHtml(r.cpf || '')}</td>
+            <td>${escaparHtml(formatarCPF(r.cpf))}</td>
             <td>${escaparHtml(r.bairro || '')}</td>
+            <td>${escaparHtml(r.atendente || '')}</td>
           </tr>`
         )
         .join('')
-    : '<tr><td colspan="6" class="vazio">Nenhum atendimento no período.</td></tr>';
+    : '<tr><td colspan="7" class="vazio">Nenhum atendimento no período.</td></tr>';
 
-  status.textContent = `${total} atendimento(s) encontrado(s).`;
-  status.className = 'dica ok';
+  setDica('relatorio-status', `${total} atendimento(s) de ${pessoas} pessoa(s).`, 'ok');
 });
 
-el('btn-exportar').addEventListener('click', async () => {
-  const status = el('relatorio-status');
+async function exportar(funcao, rotulo) {
   const filtros = filtrosRelatorio();
-
-  if (!filtros.dataInicio || !filtros.dataFim) {
-    status.textContent = 'Informe o período (de/até) antes de exportar.';
-    status.className = 'dica erro';
-    return;
+  if (!periodoValido(filtros)) return;
+  setDica('relatorio-status', `Gerando ${rotulo}...`);
+  try {
+    const { salvo, caminho } = await funcao(filtros);
+    if (salvo) setDica('relatorio-status', `${rotulo} salvo em: ${caminho}`, 'ok');
+    else setDica('relatorio-status', 'Exportação cancelada.');
+  } catch (erro) {
+    setDica('relatorio-status', `Não foi possível salvar: ${mensagemErro(erro)} (se o arquivo já existe, ele está aberto em outro programa? Feche e tente de novo.)`, 'erro');
   }
+}
 
-  const { salvo, caminho } = await window.api.exportarRelatorio(filtros);
-  if (salvo) {
-    status.textContent = `Relatório exportado: ${caminho}`;
-    status.className = 'dica ok';
-  } else {
-    status.textContent = 'Exportação cancelada.';
-    status.className = 'dica';
-  }
-});
-
-el('btn-exportar-pdf').addEventListener('click', async () => {
-  const status = el('relatorio-status');
-  const filtros = filtrosRelatorio();
-
-  if (!filtros.dataInicio || !filtros.dataFim) {
-    status.textContent = 'Informe o período (de/até) antes de exportar.';
-    status.className = 'dica erro';
-    return;
-  }
-
-  status.textContent = 'Gerando PDF...';
-  status.className = 'dica';
-
-  const { salvo, caminho } = await window.api.exportarRelatorioPDF(filtros);
-  if (salvo) {
-    status.textContent = `PDF exportado: ${caminho}`;
-    status.className = 'dica ok';
-  } else {
-    status.textContent = 'Exportação cancelada.';
-    status.className = 'dica';
-  }
-});
+el('btn-exportar').addEventListener('click', () => exportar(window.api.exportarRelatorio, 'Planilha'));
+el('btn-exportar-pdf').addEventListener('click', () => exportar(window.api.exportarRelatorioPDF, 'PDF'));
 
 el('btn-backup').addEventListener('click', async () => {
-  const status = el('relatorio-status');
   try {
     const { salvo, caminho } = await window.api.backupManual();
-    status.textContent = salvo ? `Cópia de segurança salva em: ${caminho}` : 'Backup cancelado.';
-    status.className = salvo ? 'dica ok' : 'dica';
+    if (salvo) setDica('relatorio-status', `Cópia de segurança salva em: ${caminho}`, 'ok');
+    else setDica('relatorio-status', 'Backup cancelado.');
   } catch (erro) {
-    status.textContent = 'Não foi possível salvar o backup: ' + mensagemErro(erro);
-    status.className = 'dica erro';
+    setDica('relatorio-status', 'Não foi possível salvar o backup: ' + mensagemErro(erro), 'erro');
   }
 });
