@@ -71,8 +71,8 @@ main { padding: 20px 28px 40px; max-width: 1000px; margin: 0 auto; }
   border-radius: 5px;
   margin-right: 6px;
 }
-.btn-perigo { color: var(--erro); border-color: #f0c4c1; }
-.btn-perigo:hover { background: #fbeceb; }
+.btn.btn-perigo { color: var(--erro); border-color: #f0c4c1; }
+.btn.btn-perigo:hover { background: #fbeceb; }
 .tabela td input, .tabela td select {
   padding: 5px 6px;
   font-size: 12px;
