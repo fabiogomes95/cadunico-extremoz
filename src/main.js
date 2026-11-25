@@ -75,17 +75,21 @@ function montarHtmlRelatorio({ dataInicio, dataFim, tipoRotulo, registros, porTi
     * { box-sizing: border-box; }
     body { font-family: Arial, sans-serif; color: #1f2937; padding: 0; margin: 0; font-size: 12px; }
     tr { break-inside: avoid; }
-    h1 { font-size: 17px; color: #123a66; margin: 0 0 2px; }
+    h1 { font-size: 18px; color: #002776; margin: 0 0 2px; }
+    .faixa { height: 4px; margin: 0 0 14px; background: linear-gradient(90deg, #009c3b 0 50%, #ffcd07 50% 70%, #002776 70%); }
+    .orgao { font-size: 10px; font-weight: bold; letter-spacing: .08em; text-transform: uppercase; color: #00703c; margin: 0 0 4px; }
     .subtitulo { color: #6b7280; margin: 0 0 18px; font-size: 12px; }
-    h2 { font-size: 13px; color: #123a66; margin: 22px 0 8px; }
+    h2 { font-size: 13px; color: #00173f; margin: 22px 0 8px; }
     table { width: 100%; border-collapse: collapse; }
     th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid #dde3ea; }
-    th { background: #f4f6f9; font-size: 11px; text-transform: uppercase; color: #6b7280; }
-    tfoot td { font-weight: bold; border-top: 2px solid #dde3ea; }
+    th { background: #e6ecf6; font-size: 11px; color: #00173f; border-bottom: 2px solid #002776; }
+    tfoot td { font-weight: bold; border-top: 2px solid #002776; }
     .rodape { margin-top: 24px; font-size: 10px; color: #9aa3af; }
   </style></head><body>
-    <h1>Controle de Atendimentos — Cadastro Único</h1>
-    <p class="subtitulo">Extremoz/RN &nbsp;·&nbsp; Período: ${formatarDataBR(dataInicio)} a ${formatarDataBR(dataFim)} &nbsp;·&nbsp; Tipo: ${escaparHtml(tipoRotulo)}</p>
+    <div class="faixa"></div>
+    <p class="orgao">Prefeitura Municipal de Extremoz/RN · Cadastro Único</p>
+    <h1>Relatório de Atendimentos</h1>
+    <p class="subtitulo">Período: ${formatarDataBR(dataInicio)} a ${formatarDataBR(dataFim)} &nbsp;·&nbsp; Tipo: ${escaparHtml(tipoRotulo)}</p>
 
     <h2>Resumo por tipo</h2>
     <table>

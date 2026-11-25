@@ -7,10 +7,23 @@
 <link rel="stylesheet" href="style.css" />
 </head>
 <body>
+  <div class="barra-gov">
+    <span>Prefeitura Municipal de Extremoz &nbsp;·&nbsp; Rio Grande do Norte</span>
+    <span>Sistema de uso interno</span>
+  </div>
+  <div class="faixa-nacional" aria-hidden="true"><i></i><i></i><i></i></div>
   <header class="topo">
-    <div>
-      <h1>Controle de Atendimentos — Cadastro Único</h1>
-      <p class="subtitulo">Extremoz/RN</p>
+    <div class="identidade">
+      <svg class="marca" viewBox="0 0 48 48" aria-hidden="true">
+        <circle cx="24" cy="24" r="23" fill="#002776"/>
+        <circle cx="24" cy="24" r="19" fill="none" stroke="#FFCD07" stroke-width="1.5"/>
+        <path d="M24 9.5l3.6 10.1h10.6l-8.6 6.3 3.3 10.2L24 29.8l-8.9 6.3 3.3-10.2-8.6-6.3h10.6z" fill="#FFCD07"/>
+        <path d="M24 16.2l1.9 5.3h5.6l-4.5 3.3 1.7 5.4L24 27l-4.7 3.2 1.7-5.4-4.5-3.3h5.6z" fill="#009C3B"/>
+      </svg>
+      <div>
+        <p class="subtitulo">Cadastro Único &nbsp;·&nbsp; Recepção</p>
+        <h1>Controle de Atendimentos</h1>
+      </div>
     </div>
     <div class="atendente-box">
       <label for="atendente">Atendente</label>
@@ -28,7 +41,7 @@
     <!-- ABA: NOVO ATENDIMENTO -->
     <section id="aba-atendimento" class="aba">
       <div class="painel">
-        <h2>1. Localizar pessoa</h2>
+        <h2><span class="num">1</span>Localizar pessoa</h2>
         <div class="linha">
           <div class="campo">
             <label for="busca-nis">NIS</label>
@@ -49,7 +62,7 @@
 
       <div id="bloco-registro" class="oculta">
         <div class="painel">
-          <h2>2. Dados da pessoa</h2>
+          <h2><span class="num">2</span>Dados da pessoa</h2>
           <div class="linha">
             <div class="campo campo-grande">
               <label for="f-nome">Nome completo *</label>
@@ -63,7 +76,7 @@
         </div>
 
         <div class="painel">
-          <h2>3. Dados do atendimento</h2>
+          <h2><span class="num">3</span>Dados do atendimento</h2>
           <div class="linha">
             <div class="campo">
               <label for="f-data">Data *</label>
@@ -196,10 +209,15 @@
     </section>
   </main>
 
+  <footer class="rodape">
+    Prefeitura Municipal de Extremoz/RN &nbsp;·&nbsp; Cadastro Único &nbsp;·&nbsp; Dados protegidos pela LGPD: não compartilhe CPF, NIS ou relatórios fora do serviço.
+  </footer>
+
   <datalist id="lista-bairros"></datalist>
   <datalist id="lista-atendentes"></datalist>
 
   <dialog id="modal" class="modal">
+    <div class="modal-faixa" aria-hidden="true"></div>
     <p id="modal-texto"></p>
     <div class="modal-botoes">
       <button id="modal-cancelar" class="btn">Cancelar</button>
