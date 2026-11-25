@@ -440,7 +440,7 @@ el('btn-registrar').addEventListener('click', async () => {
     resetarAtendimento();
     renderHistorico(historico, pessoa.id, pessoa.nome);
     mostrarAvisoRegistro(
-      `✓ Atendimento registrado para ${pessoa.nome}. Pronto para o próximo.`,
+      `Atendimento registrado para ${pessoa.nome}. Pronto para o próximo.`,
       'ok'
     );
     await atualizarListas();
