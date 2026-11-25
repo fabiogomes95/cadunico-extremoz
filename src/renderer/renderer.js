@@ -77,6 +77,12 @@ function setDica(id, texto, tipo = '') {
 function abrirModal(texto, { ok = 'OK', cancelar = null, perigo = false } = {}) {
   return new Promise((resolve) => {
     const modal = el('modal');
+    if (modal.open) {
+      // Já há uma janela aberta: não empilha outra (evita travar a tela).
+      console.error('Aviso não exibido (outra janela aberta):', texto);
+      resolve(false);
+      return;
+    }
     el('modal-texto').textContent = texto;
     const btnOk = el('modal-ok');
     const btnCancelar = el('modal-cancelar');
@@ -596,7 +602,7 @@ async function exportar(funcao, rotulo) {
     if (salvo) setDica('relatorio-status', `${rotulo} salvo em: ${caminho}`, 'ok');
     else setDica('relatorio-status', 'Exportação cancelada.');
   } catch (erro) {
-    setDica('relatorio-status', `Não foi possível salvar: ${mensagemErro(erro)} (o arquivo está aberto no Excel?)`, 'erro');
+    setDica('relatorio-status', `Não foi possível salvar: ${mensagemErro(erro)} (se o arquivo já existe, ele está aberto em outro programa? Feche e tente de novo.)`, 'erro');
   }
 }
 

@@ -373,14 +373,16 @@ class Repositorio {
     );
   }
 
-  totaisPorTipo({ dataInicio, dataFim }) {
+  // Respeita o mesmo filtro de tipo da listagem, para o resumo bater com o total.
+  totaisPorTipo({ dataInicio, dataFim, tipo = null }) {
     return consultarTodas(
       this.sqlDb,
       `SELECT tipo, COUNT(*) AS total
        FROM atendimentos
-       WHERE data BETWEEN ? AND ?
-       GROUP BY tipo`,
-      [dataInicio, dataFim]
+       WHERE data BETWEEN ? AND ? AND (? IS NULL OR tipo = ?)
+       GROUP BY tipo
+       ORDER BY total DESC, tipo ASC`,
+      [dataInicio, dataFim, tipo, tipo]
     );
   }
 

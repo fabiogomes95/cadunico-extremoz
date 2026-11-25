@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const XLSX = require('xlsx');
 const {
   abrirBanco,
@@ -20,7 +21,8 @@ let janelaPrincipal = null;
 
 // Só uma janela do app por vez: o banco fica em memória e é regravado inteiro
 // a cada salvamento, então duas instâncias abertas apagariam os dados uma da outra.
-if (!app.requestSingleInstanceLock()) {
+const temTrava = app.requestSingleInstanceLock();
+if (!temTrava) {
   app.quit();
 } else {
   app.on('second-instance', () => {
@@ -124,13 +126,26 @@ function criarJanela() {
 }
 
 app.whenReady().then(async () => {
+  if (!temTrava) return; // segunda instância: só fecha, não toca no banco
+
   const dbPath = path.join(app.getPath('userData'), 'cadunico.db');
   try {
     backupDiario(dbPath);
   } catch (erro) {
     console.error('Falha no backup diário:', erro);
   }
-  db = await abrirBanco(dbPath);
+  try {
+    db = await abrirBanco(dbPath);
+  } catch (erro) {
+    dialog.showErrorBox(
+      'Não foi possível abrir os dados',
+      'O arquivo do banco de dados não pôde ser aberto. NÃO apague nada e chame o TI.\n\n' +
+        `Banco: ${dbPath}\nCópias de segurança: ${path.join(path.dirname(dbPath), 'backups')}\n\n` +
+        `Detalhe técnico: ${erro.message}`
+    );
+    app.quit();
+    return;
+  }
   repo = new Repositorio(db);
 
   criarJanela();
@@ -267,7 +282,7 @@ ipcMain.handle('banco:backupManual', async () => {
 
 ipcMain.handle('relatorio:gerar', (_e, { dataInicio, dataFim, tipo }) => {
   const registros = repo.listarAtendimentos({ dataInicio, dataFim, tipo: tipo || null });
-  const porTipo = repo.totaisPorTipo({ dataInicio, dataFim });
+  const porTipo = repo.totaisPorTipo({ dataInicio, dataFim, tipo: tipo || null });
   const porDia = repo.totaisPorDia({ dataInicio, dataFim });
   return {
     registros,
@@ -280,7 +295,7 @@ ipcMain.handle('relatorio:gerar', (_e, { dataInicio, dataFim, tipo }) => {
 
 ipcMain.handle('relatorio:exportar', async (_e, { dataInicio, dataFim, tipo }) => {
   const registros = repo.listarAtendimentos({ dataInicio, dataFim, tipo: tipo || null });
-  const porTipo = repo.totaisPorTipo({ dataInicio, dataFim });
+  const porTipo = repo.totaisPorTipo({ dataInicio, dataFim, tipo: tipo || null });
 
   const { canceled, filePath } = await dialog.showSaveDialog({
     title: 'Exportar relatório',
@@ -307,7 +322,8 @@ ipcMain.handle('relatorio:exportar', async (_e, { dataInicio, dataFim, tipo }) =
 
   if (ext === '.csv') {
     const ws = XLSX.utils.json_to_sheet(linhas);
-    const csv = XLSX.utils.sheet_to_csv(ws);
+    // Ponto e vírgula: é o separador que o Excel em português espera.
+    const csv = XLSX.utils.sheet_to_csv(ws, { FS: ';' });
     fs.writeFileSync(filePath, '﻿' + csv, 'utf8');
   } else {
     const wb = XLSX.utils.book_new();
@@ -327,7 +343,7 @@ ipcMain.handle('relatorio:exportar', async (_e, { dataInicio, dataFim, tipo }) =
 
 ipcMain.handle('relatorio:exportarPDF', async (_e, { dataInicio, dataFim, tipo }) => {
   const registros = repo.listarAtendimentos({ dataInicio, dataFim, tipo: tipo || null });
-  const porTipo = repo.totaisPorTipo({ dataInicio, dataFim });
+  const porTipo = repo.totaisPorTipo({ dataInicio, dataFim, tipo: tipo || null });
 
   const { canceled, filePath } = await dialog.showSaveDialog({
     title: 'Exportar relatório em PDF',
@@ -345,9 +361,13 @@ ipcMain.handle('relatorio:exportarPDF', async (_e, { dataInicio, dataFim, tipo }
     pessoas: new Set(registros.map((r) => r.pessoa_id)).size,
   });
 
+  // Arquivo temporário em vez de URL data: (que tem limite de ~2 MB e falharia
+  // em relatórios grandes, como o do ano inteiro).
+  const htmlTemp = path.join(os.tmpdir(), `cadunico-relatorio-${Date.now()}.html`);
+  fs.writeFileSync(htmlTemp, html, 'utf8');
   const janelaPdf = new BrowserWindow({ show: false, webPreferences: { offscreen: true } });
   try {
-    await janelaPdf.loadURL('data:text/html;charset=UTF-8,' + encodeURIComponent(html));
+    await janelaPdf.loadFile(htmlTemp);
     const buffer = await janelaPdf.webContents.printToPDF({
       printBackground: true,
       pageSize: 'A4',
@@ -357,6 +377,7 @@ ipcMain.handle('relatorio:exportarPDF', async (_e, { dataInicio, dataFim, tipo }
     fs.writeFileSync(filePath, buffer);
   } finally {
     janelaPdf.close();
+    fs.rmSync(htmlTemp, { force: true });
   }
 
   return { salvo: true, caminho: filePath };
