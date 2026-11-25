@@ -1,7 +1,7 @@
 // Script de apoio: popula o banco com pessoas e atendimentos FICTÍCIOS,
 // só para testar a interface. Roda fora do Electron (Node puro).
 //
-// Uso:  node scripts/seed-teste.js
+// Uso:  node scripts/seed-teste.js --sim-dados-ficticios
 //
 // Aponta para o MESMO arquivo de banco que o app usa
 // (%APPDATA%/cadunico-atendimentos/cadunico.db). Feche o app antes de rodar
@@ -10,6 +10,15 @@
 const path = require('path');
 const os = require('os');
 const { abrirBanco, Repositorio, TIPOS_ATENDIMENTO } = require('../src/db');
+
+if (!process.argv.includes('--sim-dados-ficticios')) {
+  console.error(
+    'ATENÇÃO: este script grava dados FICTÍCIOS no banco real do app.\n' +
+      'Nunca rode no computador da recepção. Para rodar mesmo assim:\n' +
+      '  node scripts/seed-teste.js --sim-dados-ficticios'
+  );
+  process.exit(1);
+}
 
 const dbPath = path.join(os.homedir(), 'AppData', 'Roaming', 'cadunico-atendimentos', 'cadunico.db');
 

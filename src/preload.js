@@ -11,5 +11,6 @@ contextBridge.exposeInMainWorld('api', {
   excluirAtendimento: (id) => ipcRenderer.invoke('atendimento:excluir', id),
   gerarRelatorio: (filtros) => ipcRenderer.invoke('relatorio:gerar', filtros),
   exportarRelatorio: (filtros) => ipcRenderer.invoke('relatorio:exportar', filtros),
+  backupManual: () => ipcRenderer.invoke('banco:backupManual'),
   exportarRelatorioPDF: (filtros) => ipcRenderer.invoke('relatorio:exportarPDF', filtros),
 });

@@ -3,15 +3,32 @@
 
 const el = (id) => document.getElementById(id);
 
-let pessoaAtualId = null; // id da pessoa localizada/registrada, para não duplicar cadastro
+let pessoaAtualId = null; // id da pessoa carregada no formulário, para não duplicar cadastro
+let pessoaCarregada = null; // NIS/CPF da pessoa carregada, para detectar troca de pessoa
+let pessoaHistoricoId = null; // pessoa cujo histórico está na tela (aba Novo Atendimento)
 let pessoaConsultaId = null; // pessoa aberta na aba "Consultar Pessoa"
 let tipos = [];
 let historicoAnoAtual = []; // cache do histórico mostrado na aba "Novo Atendimento"
 let historicoCompletoAtual = []; // cache do histórico mostrado na aba "Consultar Pessoa"
 
+// Data local (não UTC): com toISOString, depois das 21h o Brasil já viraria "amanhã".
+function dataISO(d) {
+  const mes = String(d.getMonth() + 1).padStart(2, '0');
+  const dia = String(d.getDate()).padStart(2, '0');
+  return `${d.getFullYear()}-${mes}-${dia}`;
+}
+
 function hojeISO() {
-  const d = new Date();
-  return d.toISOString().slice(0, 10);
+  return dataISO(new Date());
+}
+
+function soDigitos(valor) {
+  return String(valor || '').replace(/\D/g, '');
+}
+
+// Tira o prefixo técnico do Electron ("Error invoking remote method ...: Error: ").
+function mensagemErro(erro) {
+  return String(erro && erro.message ? erro.message : erro).replace(/^.*Error: /, '');
 }
 
 function formatarDataBR(iso) {
@@ -130,7 +147,7 @@ function ligarAcoesHistorico(corpoEl, obterLista, recarregar) {
         await atualizarListaBairros();
         await recarregar();
       } catch (erro) {
-        alert('Não foi possível salvar: ' + erro.message);
+        alert('Não foi possível salvar: ' + mensagemErro(erro));
       }
     } else if (acao === 'excluir') {
       if (!confirm('Excluir este atendimento? Essa ação não pode ser desfeita.')) return;
@@ -144,13 +161,15 @@ function ligarAcoesHistorico(corpoEl, obterLista, recarregar) {
 
 function preencherFormPessoa(pessoa) {
   pessoaAtualId = pessoa ? pessoa.id : null;
+  pessoaCarregada = pessoa ? { nis: pessoa.nis || '', cpf: pessoa.cpf || '' } : null;
   el('f-nome').value = pessoa ? pessoa.nome : '';
   el('f-bairro').value = pessoa ? pessoa.bairro || '' : '';
   el('f-nis').value = pessoa ? pessoa.nis || '' : '';
   el('f-cpf').value = pessoa ? pessoa.cpf || '' : '';
 }
 
-function renderHistorico(historico) {
+function renderHistorico(historico, pessoaId = null) {
+  pessoaHistoricoId = pessoaId;
   historicoAnoAtual = historico || [];
   const corpo = el('historico-corpo');
   corpo.innerHTML = historicoAnoAtual.length
@@ -159,9 +178,24 @@ function renderHistorico(historico) {
 }
 
 async function recarregarHistoricoAno() {
-  if (!pessoaAtualId) return;
-  const pessoa = await window.api.buscarPessoa({ nis: el('f-nis').value, cpf: el('f-cpf').value });
-  renderHistorico(pessoa.historico);
+  if (!pessoaHistoricoId) return;
+  const { atendimentos } = await window.api.historicoCompleto(pessoaHistoricoId);
+  const ano = String(new Date().getFullYear());
+  renderHistorico(
+    atendimentos.filter((a) => a.data.startsWith(ano)),
+    pessoaHistoricoId
+  );
+}
+
+// Limpa só os campos de pessoa/atendimento, para o próximo da fila.
+function limparFormulario() {
+  el('busca-nis').value = '';
+  el('busca-cpf').value = '';
+  preencherFormPessoa(null);
+  el('f-data').value = hojeISO();
+  el('f-tipo').selectedIndex = 0;
+  el('f-obs').value = '';
+  el('busca-status').textContent = '';
 }
 
 ligarAcoesHistorico(el('historico-corpo'), () => historicoAnoAtual, recarregarHistoricoAno);
@@ -195,26 +229,37 @@ el('btn-buscar').addEventListener('click', async () => {
   status.textContent = `Cadastro encontrado: ${pessoa.nome}.`;
   status.className = 'dica ok';
   preencherFormPessoa(pessoa);
-  renderHistorico(historico);
+  renderHistorico(historico, pessoa.id);
+});
+
+['busca-nis', 'busca-cpf'].forEach((id) => {
+  el(id).addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') el('btn-buscar').click();
+  });
 });
 
 el('btn-limpar').addEventListener('click', () => {
-  pessoaAtualId = null;
-  el('busca-nis').value = '';
-  el('busca-cpf').value = '';
-  preencherFormPessoa(null);
-  el('f-data').value = hojeISO();
-  el('f-tipo').selectedIndex = 0;
-  el('f-obs').value = '';
-  el('busca-status').textContent = '';
+  limparFormulario();
   el('registro-status').textContent = '';
   renderHistorico([]);
 });
 
+// Se NIS e CPF digitados não batem com nenhum documento da pessoa carregada,
+// é outra pessoa: não reaproveita o id (evita gravar por cima do cadastro anterior).
+function idPessoaParaRegistro() {
+  if (!pessoaAtualId || !pessoaCarregada) return null;
+  const nis = soDigitos(el('f-nis').value);
+  const cpf = soDigitos(el('f-cpf').value);
+  const bateNis = nis && nis === pessoaCarregada.nis;
+  const bateCpf = cpf && cpf === pessoaCarregada.cpf;
+  const semDocAntigo = !pessoaCarregada.nis && !pessoaCarregada.cpf;
+  return bateNis || bateCpf || semDocAntigo ? pessoaAtualId : null;
+}
+
 el('btn-registrar').addEventListener('click', async () => {
   const status = el('registro-status');
   const payload = {
-    pessoaId: pessoaAtualId,
+    pessoaId: idPessoaParaRegistro(),
     nome: el('f-nome').value,
     nis: el('f-nis').value,
     cpf: el('f-cpf').value,
@@ -228,14 +273,16 @@ el('btn-registrar').addEventListener('click', async () => {
     status.textContent = 'Registrando...';
     status.className = 'dica';
     const { pessoa, historico } = await window.api.registrarAtendimento(payload);
-    pessoaAtualId = pessoa.id;
-    status.textContent = `Atendimento registrado para ${pessoa.nome}.`;
+    // Formulário volta limpo para o próximo atendimento; o histórico de quem
+    // acabou de ser atendido continua visível embaixo.
+    limparFormulario();
+    renderHistorico(historico, pessoa.id);
+    status.textContent = `Atendimento registrado para ${pessoa.nome}. Formulário pronto para o próximo.`;
     status.className = 'dica ok';
-    renderHistorico(historico);
     await atualizarListaBairros();
-    el('f-obs').value = '';
+    el('busca-nis').focus();
   } catch (erro) {
-    status.textContent = erro.message.replace('Error: ', '').replace('Error invoking remote method \'atendimento:registrar\': Error: ', '');
+    status.textContent = mensagemErro(erro);
     status.className = 'dica erro';
   }
 });
@@ -333,7 +380,7 @@ document.querySelectorAll('.btn-chip').forEach((btn) => {
       el('r-inicio').value = hojeISO();
       el('r-fim').value = hojeISO();
     } else if (btn.dataset.periodo === 'mes') {
-      const inicio = new Date(hoje.getFullYear(), hoje.getMonth(), 1).toISOString().slice(0, 10);
+      const inicio = dataISO(new Date(hoje.getFullYear(), hoje.getMonth(), 1));
       el('r-inicio').value = inicio;
       el('r-fim').value = hojeISO();
     } else if (btn.dataset.periodo === 'ano') {
@@ -432,5 +479,17 @@ el('btn-exportar-pdf').addEventListener('click', async () => {
   } else {
     status.textContent = 'Exportação cancelada.';
     status.className = 'dica';
+  }
+});
+
+el('btn-backup').addEventListener('click', async () => {
+  const status = el('relatorio-status');
+  try {
+    const { salvo, caminho } = await window.api.backupManual();
+    status.textContent = salvo ? `Cópia de segurança salva em: ${caminho}` : 'Backup cancelado.';
+    status.className = salvo ? 'dica ok' : 'dica';
+  } catch (erro) {
+    status.textContent = 'Não foi possível salvar o backup: ' + mensagemErro(erro);
+    status.className = 'dica erro';
   }
 });
