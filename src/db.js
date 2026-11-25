@@ -72,15 +72,73 @@ async function abrirBanco(dbPath) {
   return { sqlDb, dbPath };
 }
 
+// Grava primeiro num arquivo temporário e só depois troca pelo original.
+// Assim, se faltar energia no meio da gravação, o .db antigo continua inteiro.
 function salvar({ sqlDb, dbPath }) {
-  const dados = sqlDb.export();
-  fs.writeFileSync(dbPath, Buffer.from(dados));
+  const dados = Buffer.from(sqlDb.export());
+  const tmp = dbPath + '.tmp';
+  fs.writeFileSync(tmp, dados);
+  try {
+    fs.renameSync(tmp, dbPath);
+  } catch (erro) {
+    // No Windows o rename pode falhar se o antivírus estiver lendo o arquivo.
+    fs.copyFileSync(tmp, dbPath);
+    fs.rmSync(tmp, { force: true });
+  }
+}
+
+function dataLocalISO(d = new Date()) {
+  const ano = d.getFullYear();
+  const mes = String(d.getMonth() + 1).padStart(2, '0');
+  const dia = String(d.getDate()).padStart(2, '0');
+  return `${ano}-${mes}-${dia}`;
+}
+
+// Cópia automática do banco, uma por dia, guardando as últimas `manter`.
+// Fica em <pasta do banco>/backups/cadunico-AAAA-MM-DD.db
+function backupDiario(dbPath, manter = 30) {
+  if (!fs.existsSync(dbPath)) return null;
+  const pasta = path.join(path.dirname(dbPath), 'backups');
+  fs.mkdirSync(pasta, { recursive: true });
+  const destino = path.join(pasta, `cadunico-${dataLocalISO()}.db`);
+  if (!fs.existsSync(destino)) fs.copyFileSync(dbPath, destino);
+
+  const antigos = fs
+    .readdirSync(pasta)
+    .filter((f) => /^cadunico-\d{4}-\d{2}-\d{2}\.db$/.test(f))
+    .sort()
+    .reverse()
+    .slice(manter);
+  antigos.forEach((f) => fs.rmSync(path.join(pasta, f), { force: true }));
+  return destino;
 }
 
 function normalizarDoc(valor) {
   if (!valor) return null;
   const digitos = String(valor).replace(/\D/g, '');
   return digitos.length ? digitos : null;
+}
+
+function cpfValido(cpf) {
+  if (!/^\d{11}$/.test(cpf) || /^(\d)\1{10}$/.test(cpf)) return false;
+  const dv = (base) => {
+    let soma = 0;
+    for (let i = 0; i < base.length; i++) soma += Number(base[i]) * (base.length + 1 - i);
+    const resto = (soma * 10) % 11;
+    return resto === 10 ? 0 : resto;
+  };
+  return dv(cpf.slice(0, 9)) === Number(cpf[9]) && dv(cpf.slice(0, 10)) === Number(cpf[10]);
+}
+
+// Retorna a mensagem de erro, ou null se NIS/CPF estiverem ok.
+// NIS: confere só os 11 dígitos (para não travar a recepção num número válido).
+function validarDocumentos({ nis, cpf }) {
+  const n = normalizarDoc(nis);
+  const c = normalizarDoc(cpf);
+  if (!n && !c) return 'Informe ao menos o NIS ou o CPF.';
+  if (n && n.length !== 11) return `NIS deve ter 11 dígitos (foram digitados ${n.length}).`;
+  if (c && !cpfValido(c)) return 'CPF inválido. Confira os números digitados.';
+  return null;
 }
 
 // Executa um SELECT e retorna todas as linhas como objetos {coluna: valor}.
@@ -289,4 +347,14 @@ class Repositorio {
   }
 }
 
-module.exports = { abrirBanco, Repositorio, TIPOS_ATENDIMENTO, BAIRROS_SUGERIDOS };
+module.exports = {
+  abrirBanco,
+  Repositorio,
+  TIPOS_ATENDIMENTO,
+  BAIRROS_SUGERIDOS,
+  backupDiario,
+  validarDocumentos,
+  cpfValido,
+  normalizarDoc,
+  salvar,
+};

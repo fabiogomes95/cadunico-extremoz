@@ -2,10 +2,29 @@ const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const XLSX = require('xlsx');
-const { abrirBanco, Repositorio, TIPOS_ATENDIMENTO } = require('./db');
+const {
+  abrirBanco,
+  Repositorio,
+  TIPOS_ATENDIMENTO,
+  backupDiario,
+  validarDocumentos,
+} = require('./db');
 
 let db;
 let repo;
+let janelaPrincipal = null;
+
+// Só uma janela do app por vez: o banco fica em memória e é regravado inteiro
+// a cada salvamento, então duas instâncias abertas apagariam os dados uma da outra.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (!janelaPrincipal) return;
+    if (janelaPrincipal.isMinimized()) janelaPrincipal.restore();
+    janelaPrincipal.focus();
+  });
+}
 
 function rotuloTipo(valor) {
   const t = TIPOS_ATENDIMENTO.find((t) => t.valor === valor);
@@ -85,11 +104,20 @@ function criarJanela() {
     },
   });
   win.setMenuBarVisibility(false);
+  win.on('closed', () => {
+    if (janelaPrincipal === win) janelaPrincipal = null;
+  });
+  janelaPrincipal = win;
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 }
 
 app.whenReady().then(async () => {
   const dbPath = path.join(app.getPath('userData'), 'cadunico.db');
+  try {
+    backupDiario(dbPath);
+  } catch (erro) {
+    console.error('Falha no backup diário:', erro);
+  }
   db = await abrirBanco(dbPath);
   repo = new Repositorio(db);
 
@@ -134,15 +162,31 @@ ipcMain.handle('atendimento:registrar', (_e, payload) => {
   const { nome, nis, cpf, bairro, data, tipo, obs, pessoaId } = payload;
 
   if (!nome || !nome.trim()) throw new Error('Informe o nome da pessoa.');
-  if (!nis && !cpf) throw new Error('Informe ao menos o NIS ou o CPF.');
+  const erroDoc = validarDocumentos({ nis, cpf });
+  if (erroDoc) throw new Error(erroDoc);
   if (!data) throw new Error('Informe a data do atendimento.');
   if (!tipo) throw new Error('Selecione o tipo de atendimento.');
 
+  // Proteção contra misturar cadastros: NIS e CPF são conferidos separadamente.
+  const donoNis = nis ? repo.buscarPessoaPorDocumento({ nis }) : null;
+  const donoCpf = cpf ? repo.buscarPessoaPorDocumento({ cpf }) : null;
+  if (donoNis && donoCpf && donoNis.id !== donoCpf.id) {
+    throw new Error(
+      `O NIS é de ${donoNis.nome} e o CPF é de ${donoCpf.nome}. Confira os documentos.`
+    );
+  }
+  const dono = donoNis || donoCpf;
+
   let pessoa;
   if (pessoaId) {
+    if (dono && dono.id !== pessoaId) {
+      throw new Error(
+        `Este NIS/CPF já pertence a ${dono.nome}. Clique em "Limpar" e busque a pessoa certa.`
+      );
+    }
     pessoa = repo.atualizarPessoa(pessoaId, { nome, nis, cpf, bairro });
   } else {
-    const existente = repo.buscarPessoaPorDocumento({ nis, cpf });
+    const existente = dono;
     pessoa = existente
       ? repo.atualizarPessoa(existente.id, { nome, nis, cpf, bairro })
       : repo.criarPessoa({ nome, nis, cpf, bairro });
@@ -173,6 +217,22 @@ ipcMain.handle('atendimento:excluir', (_e, id) => {
   return { ok: true };
 });
 
+ipcMain.handle('banco:backupManual', async () => {
+  const hoje = new Date();
+  const sufixo = `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}-${String(
+    hoje.getDate()
+  ).padStart(2, '0')}`;
+  const { canceled, filePath } = await dialog.showSaveDialog({
+    title: 'Salvar cópia de segurança do banco',
+    defaultPath: `cadunico-backup-${sufixo}.db`,
+    filters: [{ name: 'Banco de dados', extensions: ['db'] }],
+  });
+  if (canceled || !filePath) return { salvo: false };
+  repo.persistir();
+  fs.copyFileSync(db.dbPath, filePath);
+  return { salvo: true, caminho: filePath };
+});
+
 ipcMain.handle('relatorio:gerar', (_e, { dataInicio, dataFim, tipo }) => {
   const registros = repo.listarAtendimentos({ dataInicio, dataFim, tipo: tipo || null });
   const porTipo = repo.totaisPorTipo({ dataInicio, dataFim });
@@ -200,7 +260,7 @@ ipcMain.handle('relatorio:exportar', async (_e, { dataInicio, dataFim, tipo }) =
   if (canceled || !filePath) return { salvo: false };
 
   const linhas = registros.map((r) => ({
-    Data: r.data,
+    Data: formatarDataBR(r.data),
     Tipo: rotuloTipo(r.tipo),
     Nome: r.pessoa_nome,
     NIS: r.nis || '',
